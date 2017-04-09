@@ -1,5 +1,7 @@
 package outbound
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg outbound -path Proxy,VMess,Outbound
+
 import (
 	"context"
 	"runtime"
@@ -9,7 +11,6 @@ import (
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/protocol"
 	"v2ray.com/core/common/retry"
@@ -30,7 +31,7 @@ type Handler struct {
 func New(ctx context.Context, config *Config) (*Handler, error) {
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("VMess|Outbound: No space in context.")
+		return nil, newError("no space in context.")
 	}
 
 	serverList := protocol.NewServerList()
@@ -61,15 +62,15 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 		return nil
 	})
 	if err != nil {
-		return errors.Base(err).RequireUserAction().Message("VMess|Outbound: Failed to find an available destination.")
+		return newError("failed to find an available destination").Base(err).AtWarning()
 	}
 	defer conn.Close()
 
 	target, ok := proxy.TargetFromContext(ctx)
 	if !ok {
-		return errors.New("VMess|Outbound: Target not specified.")
+		return newError("target not specified").AtError()
 	}
-	log.Info("VMess|Outbound: Tunneling request to ", target, " via ", rec.Destination())
+	log.Trace(newError("tunneling request to ", target, " via ", rec.Destination()))
 
 	command := protocol.RequestCommandTCP
 	if target.Network == net.Network_UDP {
@@ -86,7 +87,7 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 
 	rawAccount, err := request.User.GetTypedAccount()
 	if err != nil {
-		return errors.Base(err).RequireUserAction().Message("VMess|Outbound: Failed to get user account.")
+		return newError("failed to get user account").Base(err).AtWarning()
 	}
 	account := rawAccount.(*vmess.InternalAccount)
 	request.Security = account.Security
@@ -95,18 +96,12 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 		request.Option.Set(protocol.RequestOptionChunkMasking)
 	}
 
-	conn.SetReusable(true)
-	if conn.Reusable() { // Conn reuse may be disabled on transportation layer
-		request.Option.Set(protocol.RequestOptionConnectionReuse)
-	}
-
 	input := outboundRay.OutboundInput()
 	output := outboundRay.OutboundOutput()
 
 	session := encoding.NewClientSession(protocol.DefaultIDHash)
 
-	ctx, cancel := context.WithCancel(ctx)
-	timer := signal.CancelAfterInactivity(ctx, cancel, time.Minute*2)
+	ctx, timer := signal.CancelAfterInactivity(ctx, time.Minute*2)
 
 	requestDone := signal.ExecuteAsync(func() error {
 		writer := buf.NewBufferedWriter(conn)
@@ -115,11 +110,11 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 		bodyWriter := session.EncodeRequestBody(request, writer)
 		firstPayload, err := input.ReadTimeout(time.Millisecond * 500)
 		if err != nil && err != buf.ErrReadTimeout {
-			return errors.Base(err).Message("VMess|Outbound: Failed to get first payload.")
+			return newError("failed to get first payload").Base(err)
 		}
 		if !firstPayload.IsEmpty() {
 			if err := bodyWriter.Write(firstPayload); err != nil {
-				return errors.Base(err).Message("VMess|Outbound: Failed to write first payload.")
+				return newError("failed to write first payload").Base(err)
 			}
 			firstPayload.Release()
 		}
@@ -155,8 +150,6 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 		}
 		v.handleCommand(rec.Destination(), header.Command)
 
-		conn.SetReusable(header.Option.Has(protocol.ResponseOptionConnectionReuse))
-
 		reader.SetBuffered(false)
 		bodyReader := session.DecodeResponseBody(request, reader)
 		if err := buf.PipeUntilEOF(timer, bodyReader, output); err != nil {
@@ -167,9 +160,7 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 	})
 
 	if err := signal.ErrorOrFinish2(ctx, requestDone, responseDone); err != nil {
-		log.Info("VMess|Outbound: Connection ending with ", err)
-		conn.SetReusable(false)
-		return err
+		return newError("connection ends").Base(err)
 	}
 	runtime.KeepAlive(timer)
 

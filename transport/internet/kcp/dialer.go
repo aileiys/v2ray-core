@@ -12,22 +12,18 @@ import (
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
 	"v2ray.com/core/common/dice"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/transport/internet"
-	"v2ray.com/core/transport/internet/internal"
 	v2tls "v2ray.com/core/transport/internet/tls"
 )
 
 var (
 	globalConv = uint32(dice.RandomUint16())
-	globalPool = internal.NewConnectionPool()
 )
 
 type ClientConnection struct {
 	sync.RWMutex
 	net.Conn
-	id     internal.ConnectionID
 	input  func([]Segment)
 	reader PacketReader
 	writer PacketWriter
@@ -55,10 +51,6 @@ func (o *ClientConnection) Write(b []byte) (int, error) {
 
 func (o *ClientConnection) Read([]byte) (int, error) {
 	panic("KCP|ClientConnection: Read should not be called.")
-}
-
-func (o *ClientConnection) Id() internal.ConnectionID {
-	return o.id
 }
 
 func (o *ClientConnection) Close() error {
@@ -111,39 +103,32 @@ func (o *ClientConnection) Run() {
 
 func DialKCP(ctx context.Context, dest v2net.Destination) (internet.Connection, error) {
 	dest.Network = v2net.Network_UDP
-	log.Info("KCP|Dialer: Dialing KCP to ", dest)
+	log.Trace(newError("dialing mKCP to ", dest))
 
 	src := internet.DialerSourceFromContext(ctx)
-	id := internal.NewConnectionID(src, dest)
-	conn := globalPool.Get(id)
-	if conn == nil {
-		rawConn, err := internet.DialSystem(ctx, src, dest)
-		if err != nil {
-			log.Error("KCP|Dialer: Failed to dial to dest: ", err)
-			return nil, err
-		}
-		c := &ClientConnection{
-			Conn: rawConn,
-			id:   id,
-		}
-		go c.Run()
-		conn = c
+	rawConn, err := internet.DialSystem(ctx, src, dest)
+	if err != nil {
+		log.Trace(newError("failed to dial to dest: ", err).AtError())
+		return nil, err
 	}
+	conn := &ClientConnection{
+		Conn: rawConn,
+	}
+	go conn.Run()
 
 	kcpSettings := internet.TransportSettingsFromContext(ctx).(*Config)
 
-	clientConn := conn.(*ClientConnection)
 	header, err := kcpSettings.GetPackerHeader()
 	if err != nil {
-		return nil, errors.Base(err).Message("KCP|Dialer: Failed to create packet header.")
+		return nil, newError("failed to create packet header").Base(err)
 	}
 	security, err := kcpSettings.GetSecurity()
 	if err != nil {
-		return nil, errors.Base(err).Message("KCP|Dialer: Failed to create security.")
+		return nil, newError("failed to create security").Base(err)
 	}
-	clientConn.ResetSecurity(header, security)
+	conn.ResetSecurity(header, security)
 	conv := uint16(atomic.AddUint32(&globalConv, 1))
-	session := NewConnection(conv, clientConn, globalPool, kcpSettings)
+	session := NewConnection(conv, conn, kcpSettings)
 
 	var iConn internet.Connection
 	iConn = session
@@ -156,7 +141,7 @@ func DialKCP(ctx context.Context, dest v2net.Destination) (internet.Connection, 
 				config.ServerName = dest.Address.Domain()
 			}
 			tlsConn := tls.Client(iConn, config)
-			iConn = UnreusableConnection{Conn: tlsConn}
+			iConn = tlsConn
 		}
 	}
 

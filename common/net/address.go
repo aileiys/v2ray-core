@@ -94,7 +94,7 @@ func IPAddress(ip []byte) Address {
 		}
 		return addr
 	default:
-		log.Error("Net: Invalid IP format: ", ip)
+		log.Trace(newError("invalid IP format: ", ip).AtError())
 		return nil
 	}
 }

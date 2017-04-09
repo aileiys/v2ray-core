@@ -1,5 +1,7 @@
 package server
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg server -path App,DNS,Server
+
 import (
 	"context"
 	"net"
@@ -12,7 +14,6 @@ import (
 	"v2ray.com/core/app/dns"
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 )
 
@@ -35,7 +36,7 @@ type CacheServer struct {
 func NewCacheServer(ctx context.Context, config *dns.Config) (*CacheServer, error) {
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("DNSCacheServer: No space in context.")
+		return nil, newError("no space in context")
 	}
 	server := &CacheServer{
 		records: make(map[string]*DomainRecord),
@@ -45,7 +46,7 @@ func NewCacheServer(ctx context.Context, config *dns.Config) (*CacheServer, erro
 	space.OnInitialize(func() error {
 		disp := dispatcher.FromSpace(space)
 		if disp == nil {
-			return errors.New("DNS: Dispatcher is not found in the space.")
+			return newError("dispatcher is not found in the space")
 		}
 		for idx, destPB := range config.NameServers {
 			address := destPB.Address.AsAddress()
@@ -69,15 +70,15 @@ func NewCacheServer(ctx context.Context, config *dns.Config) (*CacheServer, erro
 	return server, nil
 }
 
-func (CacheServer) Interface() interface{} {
+func (*CacheServer) Interface() interface{} {
 	return (*dns.Server)(nil)
 }
 
-func (CacheServer) Start() error {
+func (*CacheServer) Start() error {
 	return nil
 }
 
-func (CacheServer) Close() {}
+func (*CacheServer) Close() {}
 
 // Private: Visible for testing.
 func (v *CacheServer) GetCached(domain string) []net.IP {
@@ -113,13 +114,13 @@ func (v *CacheServer) Get(domain string) []net.IP {
 				A: a,
 			}
 			v.Unlock()
-			log.Debug("DNS: Returning ", len(a.IPs), " IPs for domain ", domain)
+			log.Trace(newError("returning ", len(a.IPs), " IPs for domain ", domain).AtDebug())
 			return a.IPs
 		case <-time.After(QueryTimeout):
 		}
 	}
 
-	log.Debug("DNS: Returning nil for domain ", domain)
+	log.Trace(newError("returning nil for domain ", domain).AtDebug())
 	return nil
 }
 

@@ -8,16 +8,14 @@ import (
 
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/common/retry"
 	"v2ray.com/core/transport/internet"
-	"v2ray.com/core/transport/internet/internal"
 	v2tls "v2ray.com/core/transport/internet/tls"
 )
 
 var (
-	ErrClosedListener = errors.New("Listener is closed.")
+	ErrClosedListener = newError("Listener is closed.")
 )
 
 type TCPListener struct {
@@ -37,7 +35,7 @@ func ListenTCP(ctx context.Context, address v2net.Address, port v2net.Port, conn
 	if err != nil {
 		return nil, err
 	}
-	log.Info("TCP|Listener: Listening on ", address, ":", port)
+	log.Trace(newError("listening TCP on ", address, ":", port))
 	networkSettings := internet.TransportSettingsFromContext(ctx)
 	tcpSettings := networkSettings.(*Config)
 
@@ -56,11 +54,11 @@ func ListenTCP(ctx context.Context, address v2net.Address, port v2net.Port, conn
 	if tcpSettings.HeaderSettings != nil {
 		headerConfig, err := tcpSettings.HeaderSettings.GetInstance()
 		if err != nil {
-			return nil, errors.Base(err).Message("Internet|TCP: Invalid header settings.")
+			return nil, newError("invalid header settings").Base(err).AtError()
 		}
 		auth, err := internet.CreateConnectionAuthenticator(headerConfig)
 		if err != nil {
-			return nil, errors.Base(err).Message("Internet|TCP: Invalid header settings.")
+			return nil, newError("invalid header settings.").Base(err).AtError()
 		}
 		l.authConfig = auth
 	}
@@ -85,7 +83,7 @@ func (v *TCPListener) KeepAccepting() {
 			return nil
 		})
 		if err != nil {
-			log.Warning("TCP|Listener: Failed to accepted raw connections: ", err)
+			log.Trace(newError("failed to accepted raw connections").Base(err).AtWarning())
 			continue
 		}
 
@@ -97,20 +95,10 @@ func (v *TCPListener) KeepAccepting() {
 		}
 
 		select {
-		case v.conns <- internal.NewConnection(internal.ConnectionID{}, conn, v, internal.ReuseConnection(v.config.IsConnectionReuse())):
+		case v.conns <- internet.Connection(conn):
 		case <-time.After(time.Second * 5):
 			conn.Close()
 		}
-	}
-}
-
-func (v *TCPListener) Put(id internal.ConnectionID, conn net.Conn) {
-	select {
-	case v.conns <- internal.NewConnection(internal.ConnectionID{}, conn, v, internal.ReuseConnection(v.config.IsConnectionReuse())):
-	case <-time.After(time.Second * 5):
-		conn.Close()
-	case <-v.ctx.Done():
-		conn.Close()
 	}
 }
 

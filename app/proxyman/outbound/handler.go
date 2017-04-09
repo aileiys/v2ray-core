@@ -9,6 +9,7 @@ import (
 	"v2ray.com/core/app"
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/app/proxyman"
+	"v2ray.com/core/app/proxyman/mux"
 	"v2ray.com/core/common/buf"
 	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
@@ -22,6 +23,7 @@ type Handler struct {
 	senderSettings  *proxyman.SenderConfig
 	proxy           proxy.Outbound
 	outboundManager proxyman.OutboundHandlerManager
+	mux             *mux.ClientManager
 }
 
 func NewHandler(ctx context.Context, config *proxyman.OutboundHandlerConfig) (*Handler, error) {
@@ -30,12 +32,12 @@ func NewHandler(ctx context.Context, config *proxyman.OutboundHandlerConfig) (*H
 	}
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("Proxyman|OutboundHandler: No space in context.")
+		return nil, newError("no space in context")
 	}
 	space.OnInitialize(func() error {
 		ohm := proxyman.OutboundHandlerManagerFromSpace(space)
 		if ohm == nil {
-			return errors.New("Proxyman|OutboundHandler: No OutboundManager in space.")
+			return newError("no OutboundManager in space")
 		}
 		h.outboundManager = ohm
 		return nil
@@ -50,7 +52,7 @@ func NewHandler(ctx context.Context, config *proxyman.OutboundHandlerConfig) (*H
 		case *proxyman.SenderConfig:
 			h.senderSettings = s
 		default:
-			return nil, errors.New("Proxyman|DefaultOutboundHandler: settings is not SenderConfig.")
+			return nil, newError("settings is not SenderConfig")
 		}
 	}
 
@@ -59,25 +61,31 @@ func NewHandler(ctx context.Context, config *proxyman.OutboundHandlerConfig) (*H
 		return nil, err
 	}
 
+	if h.senderSettings != nil && h.senderSettings.MultiplexSettings != nil && h.senderSettings.MultiplexSettings.Enabled {
+		h.mux = mux.NewClientManager(proxyHandler, h)
+	}
+
 	h.proxy = proxyHandler
 	return h, nil
 }
 
 func (h *Handler) Dispatch(ctx context.Context, outboundRay ray.OutboundRay) {
-	err := h.proxy.Process(ctx, outboundRay, h)
-	// Ensure outbound ray is properly closed.
-	if err != nil && errors.Cause(err) != io.EOF {
-		err = errors.Base(err).Message("Proxyman|OutboundHandler: Failed to process outbound traffic.")
-		if errors.IsActionRequired(err) {
-			log.Warning(err)
-		} else {
-			log.Info(err)
+	if h.mux != nil {
+		err := h.mux.Dispatch(ctx, outboundRay)
+		if err != nil {
+			log.Trace(newError("failed to process outbound traffic").Base(err))
 		}
-		outboundRay.OutboundOutput().CloseError()
 	} else {
-		outboundRay.OutboundOutput().Close()
+		err := h.proxy.Process(ctx, outboundRay, h)
+		// Ensure outbound ray is properly closed.
+		if err != nil && errors.Cause(err) != io.EOF {
+			log.Trace(newError("failed to process outbound traffic").Base(err))
+			outboundRay.OutboundOutput().CloseError()
+		} else {
+			outboundRay.OutboundOutput().Close()
+		}
+		outboundRay.OutboundInput().CloseError()
 	}
-	outboundRay.OutboundInput().CloseError()
 }
 
 // Dial implements proxy.Dialer.Dial().
@@ -87,14 +95,14 @@ func (h *Handler) Dial(ctx context.Context, dest v2net.Destination) (internet.Co
 			tag := h.senderSettings.ProxySettings.Tag
 			handler := h.outboundManager.GetHandler(tag)
 			if handler != nil {
-				log.Info("Proxyman|OutboundHandler: Proxying to ", tag)
+				log.Trace(newError("proxying to ", tag).AtDebug())
 				ctx = proxy.ContextWithTarget(ctx, dest)
 				stream := ray.NewRay(ctx)
 				go handler.Dispatch(ctx, stream)
 				return NewConnection(stream), nil
 			}
 
-			log.Warning("Proxyman|OutboundHandler: Failed to get outbound handler with tag: ", tag)
+			log.Trace(newError("failed to get outbound handler with tag: ", tag).AtWarning())
 		}
 
 		if h.senderSettings.Via != nil {
@@ -182,12 +190,4 @@ func (v *Connection) SetReadDeadline(t time.Time) error {
 // SetWriteDeadline implement net.Conn.SetWriteDeadline().
 func (v *Connection) SetWriteDeadline(t time.Time) error {
 	return nil
-}
-
-func (v *Connection) Reusable() bool {
-	return false
-}
-
-func (v *Connection) SetReusable(bool) {
-
 }

@@ -1,10 +1,11 @@
 package freedom
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg freedom -path Proxy,Freedom
+
 import (
 	"context"
-	"time"
-
 	"runtime"
+	"time"
 
 	"v2ray.com/core/app"
 	"v2ray.com/core/app/dns"
@@ -12,7 +13,6 @@ import (
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
 	"v2ray.com/core/common/dice"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/retry"
 	"v2ray.com/core/common/signal"
@@ -31,7 +31,7 @@ type Handler struct {
 func New(ctx context.Context, config *Config) (*Handler, error) {
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("Freedom: No space in context.")
+		return nil, newError("no space in context")
 	}
 	f := &Handler{
 		domainStrategy: config.DomainStrategy,
@@ -42,7 +42,7 @@ func New(ctx context.Context, config *Config) (*Handler, error) {
 		if config.DomainStrategy == Config_USE_IP {
 			f.dns = dns.FromSpace(space)
 			if f.dns == nil {
-				return errors.New("Freedom: DNS server is not found in the space.")
+				return newError("DNS server is not found in the space")
 			}
 		}
 		return nil
@@ -50,7 +50,6 @@ func New(ctx context.Context, config *Config) (*Handler, error) {
 	return f, nil
 }
 
-// Private: Visible for testing.
 func (v *Handler) ResolveIP(destination net.Destination) net.Destination {
 	if !destination.Address.Family().IsDomain() {
 		return destination
@@ -58,7 +57,7 @@ func (v *Handler) ResolveIP(destination net.Destination) net.Destination {
 
 	ips := v.dns.Get(destination.Address.Domain())
 	if len(ips) == 0 {
-		log.Info("Freedom: DNS returns nil answer. Keep domain as is.")
+		log.Trace(newError("DNS returns nil answer. Keep domain as is."))
 		return destination
 	}
 
@@ -69,7 +68,7 @@ func (v *Handler) ResolveIP(destination net.Destination) net.Destination {
 	} else {
 		newDest = net.UDPDestination(net.IPAddress(ip), destination.Port)
 	}
-	log.Info("Freedom: Changing destination from ", destination, " to ", newDest)
+	log.Trace(newError("changing destination from ", destination, " to ", newDest))
 	return newDest
 }
 
@@ -83,7 +82,7 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 			Port:    net.Port(server.Port),
 		}
 	}
-	log.Info("Freedom: Opening connection to ", destination)
+	log.Trace(newError("opening connection to ", destination))
 
 	input := outboundRay.OutboundInput()
 	output := outboundRay.OutboundOutput()
@@ -102,18 +101,15 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 		return nil
 	})
 	if err != nil {
-		return errors.Base(err).Message("Freedom: Failed to open connection to ", destination)
+		return newError("failed to open connection to ", destination).Base(err)
 	}
 	defer conn.Close()
 
-	conn.SetReusable(false)
-
-	ctx, cancel := context.WithCancel(ctx)
 	timeout := time.Second * time.Duration(v.timeout)
 	if timeout == 0 {
-		timeout = time.Minute * 10
+		timeout = time.Minute * 5
 	}
-	timer := signal.CancelAfterInactivity(ctx, cancel, timeout)
+	ctx, timer := signal.CancelAfterInactivity(ctx, timeout)
 
 	requestDone := signal.ExecuteAsync(func() error {
 		v2writer := buf.NewWriter(conn)
@@ -134,10 +130,9 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 	})
 
 	if err := signal.ErrorOrFinish2(ctx, requestDone, responseDone); err != nil {
-		log.Info("Freedom: Connection ending with ", err)
 		input.CloseError()
 		output.CloseError()
-		return err
+		return newError("connection ends").Base(err)
 	}
 
 	runtime.KeepAlive(timer)

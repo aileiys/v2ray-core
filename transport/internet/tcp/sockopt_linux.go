@@ -15,18 +15,18 @@ const SO_ORIGINAL_DST = 80
 func GetOriginalDestination(conn internet.Connection) net.Destination {
 	tcpConn, ok := conn.(internet.SysFd)
 	if !ok {
-		log.Info("Dokodemo: Failed to get sys fd.")
+		log.Trace(newError("failed to get sys fd"))
 		return net.Destination{}
 	}
 	fd, err := tcpConn.SysFd()
 	if err != nil {
-		log.Info("Dokodemo: Failed to get original destination: ", err)
+		log.Trace(newError("failed to get original destination").Base(err))
 		return net.Destination{}
 	}
 
 	addr, err := syscall.GetsockoptIPv6Mreq(fd, syscall.IPPROTO_IP, SO_ORIGINAL_DST)
 	if err != nil {
-		log.Info("Dokodemo: Failed to call getsockopt: ", err)
+		log.Trace(newError("failed to call getsockopt").Base(err))
 		return net.Destination{}
 	}
 	ip := net.IPAddress(addr.Multiaddr[4:8])

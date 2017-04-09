@@ -32,7 +32,7 @@ func (v *InternalAccount) Equals(account protocol.Account) bool {
 func (v *Account) AsAccount() (protocol.Account, error) {
 	id, err := uuid.ParseString(v.Id)
 	if err != nil {
-		log.Error("VMess: Failed to parse ID: ", err)
+		log.Trace(newError("failed to parse ID").Base(err).AtError())
 		return nil, err
 	}
 	protoID := protocol.NewID(id)

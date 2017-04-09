@@ -1,14 +1,24 @@
 package scenarios
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"v2ray.com/core"
+	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
 	v2net "v2ray.com/core/common/net"
+	"v2ray.com/core/common/retry"
 )
 
 func pickPort() v2net.Port {
@@ -32,7 +42,10 @@ func readFrom(conn net.Conn, timeout time.Duration, length int) []byte {
 	b := make([]byte, length)
 	deadline := time.Now().Add(timeout)
 	conn.SetReadDeadline(deadline)
-	n, _ := io.ReadFull(conn, b[:length])
+	n, err := io.ReadFull(conn, b[:length])
+	if err != nil {
+		fmt.Println("Unexpected error from readFrom:", err)
+	}
 	return b[:n]
 }
 
@@ -58,4 +71,47 @@ func InitializeServerConfig(config *core.Config) error {
 	runningServers = append(runningServers, proc)
 
 	return nil
+}
+
+var (
+	runningServers    = make([]*exec.Cmd, 0, 10)
+	testBinaryPath    string
+	testBinaryPathGen sync.Once
+)
+
+func genTestBinaryPath() {
+	testBinaryPathGen.Do(func() {
+		var tempDir string
+		err := retry.Timed(5, 100).On(func() error {
+			dir, err := ioutil.TempDir("", "v2ray")
+			if err != nil {
+				return err
+			}
+			tempDir = dir
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
+		file := filepath.Join(tempDir, "v2ray.test")
+		if runtime.GOOS == "windows" {
+			file += ".exe"
+		}
+		testBinaryPath = file
+		fmt.Printf("Generated binary path: %s\n", file)
+	})
+}
+
+func GetSourcePath() string {
+	return filepath.Join("v2ray.com", "core", "main")
+}
+
+func CloseAllServers() {
+	log.Trace(errors.New("Closing all servers."))
+	for _, server := range runningServers {
+		server.Process.Signal(os.Interrupt)
+		server.Process.Wait()
+	}
+	runningServers = make([]*exec.Cmd, 0, 10)
+	log.Trace(errors.New("All server closed."))
 }

@@ -7,7 +7,6 @@ import (
 
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/protocol"
 	"v2ray.com/core/common/retry"
@@ -17,10 +16,12 @@ import (
 	"v2ray.com/core/transport/ray"
 )
 
+// Client is a Socks5 client.
 type Client struct {
 	serverPicker protocol.ServerPicker
 }
 
+// NewClient create a new Socks5 client based on the given config.
 func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	serverList := protocol.NewServerList()
 	for _, rec := range config.Server {
@@ -33,10 +34,11 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	return client, nil
 }
 
+// Process implements proxy.Outbound.Process.
 func (c *Client) Process(ctx context.Context, ray ray.OutboundRay, dialer proxy.Dialer) error {
 	destination, ok := proxy.TargetFromContext(ctx)
 	if !ok {
-		return errors.New("Socks|Client: Target not specified.")
+		return newError("target not specified.")
 	}
 
 	var server *protocol.ServerSpec
@@ -55,11 +57,10 @@ func (c *Client) Process(ctx context.Context, ray ray.OutboundRay, dialer proxy.
 	})
 
 	if err != nil {
-		return errors.Base(err).Message("Socks|Client: Failed to find an available destination.")
+		return newError("failed to find an available destination").Base(err)
 	}
 
 	defer conn.Close()
-	conn.SetReusable(false)
 
 	request := &protocol.RequestHeader{
 		Version: socks5Version,
@@ -78,11 +79,10 @@ func (c *Client) Process(ctx context.Context, ray ray.OutboundRay, dialer proxy.
 
 	udpRequest, err := ClientHandshake(request, conn, conn)
 	if err != nil {
-		return errors.Base(err).RequireUserAction().Message("Socks|Client: Failed to establish connection to server.")
+		return newError("failed to establish connection to server").AtWarning().Base(err)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	timer := signal.CancelAfterInactivity(ctx, cancel, time.Minute*2)
+	ctx, timer := signal.CancelAfterInactivity(ctx, time.Minute*2)
 
 	var requestFunc func() error
 	var responseFunc func() error
@@ -97,7 +97,7 @@ func (c *Client) Process(ctx context.Context, ray ray.OutboundRay, dialer proxy.
 	} else if request.Command == protocol.RequestCommandUDP {
 		udpConn, err := dialer.Dial(ctx, udpRequest.Destination())
 		if err != nil {
-			return errors.Base(err).Message("Socks|Client: Failed to create UDP connection.")
+			return newError("failed to create UDP connection").Base(err)
 		}
 		defer udpConn.Close()
 		requestFunc = func() error {
@@ -113,7 +113,7 @@ func (c *Client) Process(ctx context.Context, ray ray.OutboundRay, dialer proxy.
 	requestDone := signal.ExecuteAsync(requestFunc)
 	responseDone := signal.ExecuteAsync(responseFunc)
 	if err := signal.ErrorOrFinish2(ctx, requestDone, responseDone); err != nil {
-		return errors.Base(err).Message("Socks|Client: Connection ends.")
+		return newError("connection ends").Base(err)
 	}
 
 	runtime.KeepAlive(timer)

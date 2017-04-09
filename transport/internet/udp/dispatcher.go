@@ -44,7 +44,7 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest v2net.Destination) 
 		return entry, true
 	}
 
-	log.Info("UDP|Server: establishing new connection for ", dest)
+	log.Trace(newError("establishing new connection for ", dest))
 	inboundRay, _ := v.dispatcher.Dispatch(ctx, dest)
 	v.conns[dest] = inboundRay
 	return inboundRay, false
@@ -52,7 +52,7 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest v2net.Destination) 
 
 func (v *Dispatcher) Dispatch(ctx context.Context, destination v2net.Destination, payload *buf.Buffer, callback ResponseCallback) {
 	// TODO: Add user to destString
-	log.Debug("UDP|Server: Dispatch request: ", destination)
+	log.Trace(newError("dispatch request to: ", destination).AtDebug())
 
 	inboundRay, existing := v.getInboundRay(ctx, destination)
 	outputStream := inboundRay.InboundInput()

@@ -1,5 +1,7 @@
 package dokodemo
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg dokodemo -path Proxy,Dokodemo
+
 import (
 	"context"
 	"runtime"
@@ -10,7 +12,6 @@ import (
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/signal"
 	"v2ray.com/core/proxy"
@@ -26,10 +27,10 @@ type DokodemoDoor struct {
 func New(ctx context.Context, config *Config) (*DokodemoDoor, error) {
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("Dokodemo: No space in context.")
+		return nil, newError("no space in context")
 	}
 	if config.NetworkList == nil || config.NetworkList.Size() == 0 {
-		return nil, errors.New("DokodemoDoor: No network specified.")
+		return nil, newError("no network specified")
 	}
 	d := &DokodemoDoor{
 		config:  config,
@@ -44,8 +45,7 @@ func (d *DokodemoDoor) Network() net.NetworkList {
 }
 
 func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn internet.Connection, dispatcher dispatcher.Interface) error {
-	log.Debug("Dokodemo: processing connection from: ", conn.RemoteAddr())
-	conn.SetReusable(false)
+	log.Trace(newError("processing connection from: ", conn.RemoteAddr()).AtDebug())
 	dest := net.Destination{
 		Network: network,
 		Address: d.address,
@@ -57,15 +57,14 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 		}
 	}
 	if !dest.IsValid() || dest.Address == nil {
-		log.Info("Dokodemo: Invalid destination. Discarding...")
-		return errors.New("Dokodemo: Unable to get destination.")
+		return newError("unable to get destination")
 	}
-	ctx, cancel := context.WithCancel(ctx)
+
 	timeout := time.Second * time.Duration(d.config.Timeout)
 	if timeout == 0 {
 		timeout = time.Minute * 2
 	}
-	timer := signal.CancelAfterInactivity(ctx, cancel, timeout)
+	ctx, timer := signal.CancelAfterInactivity(ctx, timeout)
 
 	inboundRay, err := dispatcher.Dispatch(ctx, dest)
 	if err != nil {
@@ -78,8 +77,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 		chunkReader := buf.NewReader(conn)
 
 		if err := buf.PipeUntilEOF(timer, chunkReader, inboundRay.InboundInput()); err != nil {
-			log.Info("Dokodemo: Failed to transport request: ", err)
-			return err
+			return newError("failed to transport request").Base(err)
 		}
 
 		return nil
@@ -89,8 +87,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 		v2writer := buf.NewWriter(conn)
 
 		if err := buf.PipeUntilEOF(timer, inboundRay.InboundOutput(), v2writer); err != nil {
-			log.Info("Dokodemo: Failed to transport response: ", err)
-			return err
+			return newError("failed to transport response").Base(err)
 		}
 		return nil
 	})
@@ -98,8 +95,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 	if err := signal.ErrorOrFinish2(ctx, requestDone, responseDone); err != nil {
 		inboundRay.InboundInput().CloseError()
 		inboundRay.InboundOutput().CloseError()
-		log.Info("Dokodemo: Connection ends with ", err)
-		return err
+		return newError("connection ends").Base(err)
 	}
 
 	runtime.KeepAlive(timer)

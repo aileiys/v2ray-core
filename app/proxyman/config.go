@@ -2,7 +2,6 @@ package proxyman
 
 import (
 	"context"
-	"errors"
 
 	"v2ray.com/core/proxy"
 )
@@ -23,7 +22,7 @@ func (s *AllocationStrategy) GetRefreshValue() uint32 {
 
 func (c *OutboundHandlerConfig) GetProxyHandler(ctx context.Context) (proxy.Outbound, error) {
 	if c == nil {
-		return nil, errors.New("Proxyman: OutboundHandlerConfig is nil.")
+		return nil, newError("OutboundHandlerConfig is nil")
 	}
 	config, err := c.ProxySettings.GetInstance()
 	if err != nil {

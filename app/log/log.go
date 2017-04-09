@@ -1,5 +1,7 @@
 package log
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg log -path App,Log
+
 import (
 	"context"
 
@@ -43,42 +45,58 @@ func SetLogLevel(level LogLevel) {
 func InitErrorLogger(file string) error {
 	logger, err := internal.NewFileLogWriter(file)
 	if err != nil {
-		return errors.Base(err).Message("Log: Failed to create error logger on file (", file, ")")
+		return newError("failed to create error logger on file (", file, ")").Base(err)
 	}
 	streamLoggerInstance = logger
 	return nil
 }
 
-// Debug outputs a debug log with given format and optional arguments.
-func Debug(val ...interface{}) {
+// writeDebug outputs a debug log with given format and optional arguments.
+func writeDebug(val ...interface{}) {
 	debugLogger.Log(&internal.ErrorLog{
 		Prefix: "[Debug]",
 		Values: val,
 	})
 }
 
-// Info outputs an info log with given format and optional arguments.
-func Info(val ...interface{}) {
+// writeInfo outputs an info log with given format and optional arguments.
+func writeInfo(val ...interface{}) {
 	infoLogger.Log(&internal.ErrorLog{
 		Prefix: "[Info]",
 		Values: val,
 	})
 }
 
-// Warning outputs a warning log with given format and optional arguments.
-func Warning(val ...interface{}) {
+// writeWarning outputs a warning log with given format and optional arguments.
+func writeWarning(val ...interface{}) {
 	warningLogger.Log(&internal.ErrorLog{
 		Prefix: "[Warning]",
 		Values: val,
 	})
 }
 
-// Error outputs an error log with given format and optional arguments.
-func Error(val ...interface{}) {
+// writeError outputs an error log with given format and optional arguments.
+func writeError(val ...interface{}) {
 	errorLogger.Log(&internal.ErrorLog{
 		Prefix: "[Error]",
 		Values: val,
 	})
+}
+
+func Trace(err error) {
+	s := errors.GetSeverity(err)
+	switch s {
+	case errors.SeverityDebug:
+		writeDebug(err)
+	case errors.SeverityInfo:
+		writeInfo(err)
+	case errors.SeverityWarning:
+		writeWarning(err)
+	case errors.SeverityError:
+		writeError(err)
+	default:
+		writeInfo(err)
+	}
 }
 
 type Instance struct {

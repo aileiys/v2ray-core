@@ -40,14 +40,16 @@ func (x ConfigFormat) String() string {
 }
 func (ConfigFormat) EnumDescriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
 
+// Master config of V2Ray. V2Ray Core takes this config as input and functions accordingly.
 type Config struct {
 	// Inbound handler configurations. Must have at least one item.
 	Inbound []*v2ray_core_app_proxyman.InboundHandlerConfig `protobuf:"bytes,1,rep,name=inbound" json:"inbound,omitempty"`
 	// Outbound handler configurations. Must have at least one item. The first item is used as default for routing.
 	Outbound []*v2ray_core_app_proxyman.OutboundHandlerConfig `protobuf:"bytes,2,rep,name=outbound" json:"outbound,omitempty"`
 	// App configuration. Must be one in the app directory.
-	App       []*v2ray_core_common_serial.TypedMessage `protobuf:"bytes,4,rep,name=app" json:"app,omitempty"`
-	Transport *v2ray_core_transport.Config             `protobuf:"bytes,5,opt,name=transport" json:"transport,omitempty"`
+	App []*v2ray_core_common_serial.TypedMessage `protobuf:"bytes,4,rep,name=app" json:"app,omitempty"`
+	// Transport settings.
+	Transport *v2ray_core_transport.Config `protobuf:"bytes,5,opt,name=transport" json:"transport,omitempty"`
 }
 
 func (m *Config) Reset()                    { *m = Config{} }
@@ -92,7 +94,7 @@ func init() { proto.RegisterFile("v2ray.com/core/config.proto", fileDescriptor0)
 
 var fileDescriptor0 = []byte{
 	// 319 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x74, 0x90, 0x5f, 0x4b, 0xf3, 0x30,
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x90, 0x5f, 0x4b, 0xf3, 0x30,
 	0x14, 0xc6, 0xdf, 0x6e, 0x7d, 0x67, 0x3d, 0x1b, 0x32, 0x72, 0x35, 0xa6, 0x17, 0x43, 0xd8, 0x18,
 	0x82, 0xa9, 0xd4, 0x1b, 0xf1, 0xd2, 0x81, 0x7f, 0x06, 0xba, 0x31, 0xc5, 0x0b, 0x6f, 0x24, 0xeb,
 	0xb2, 0x31, 0x58, 0x72, 0x42, 0x9a, 0x89, 0xfd, 0x28, 0x7e, 0x05, 0x3f, 0xa5, 0xb4, 0x69, 0xbb,

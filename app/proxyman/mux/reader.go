@@ -1,23 +1,26 @@
 package mux
 
-import "io"
-import "v2ray.com/core/common/buf"
-import "v2ray.com/core/common/serial"
+import (
+	"io"
 
-type muxReader struct {
+	"v2ray.com/core/common/buf"
+	"v2ray.com/core/common/serial"
+)
+
+type Reader struct {
 	reader          io.Reader
 	remainingLength int
 	buffer          *buf.Buffer
 }
 
-func NewReader(reader buf.Reader) *muxReader {
-	return &muxReader{
+func NewReader(reader buf.Reader) *Reader {
+	return &Reader{
 		reader: buf.ToBytesReader(reader),
 		buffer: buf.NewLocal(1024),
 	}
 }
 
-func (r *muxReader) ReadMetadata() (*FrameMetadata, error) {
+func (r *Reader) ReadMetadata() (*FrameMetadata, error) {
 	b := r.buffer
 	b.Clear()
 
@@ -25,6 +28,9 @@ func (r *muxReader) ReadMetadata() (*FrameMetadata, error) {
 		return nil, err
 	}
 	metaLen := serial.BytesToUint16(b.Bytes())
+	if metaLen > 512 {
+		return nil, newError("invalid metalen ", metaLen)
+	}
 	b.Clear()
 	if err := b.AppendSupplier(buf.ReadFullFrom(r.reader, int(metaLen))); err != nil {
 		return nil, err
@@ -32,7 +38,7 @@ func (r *muxReader) ReadMetadata() (*FrameMetadata, error) {
 	return ReadFrameFrom(b.Bytes())
 }
 
-func (r *muxReader) Read() (*buf.Buffer, bool, error) {
+func (r *Reader) Read() (*buf.Buffer, bool, error) {
 	b := buf.New()
 	var dataLen int
 	if r.remainingLength > 0 {

@@ -15,7 +15,7 @@ func (v *Config) BuildCertificates() []tls.Certificate {
 	for _, entry := range v.Certificate {
 		keyPair, err := tls.X509KeyPair(entry.Certificate, entry.Key)
 		if err != nil {
-			log.Warning("TLS: ignoring invalid X509 key pair: ", err)
+			log.Trace(newError("ignoring invalid X509 key pair").Base(err).AtWarning())
 			continue
 		}
 		certs = append(certs, keyPair)

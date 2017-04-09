@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 )
 
@@ -14,7 +13,7 @@ var (
 
 func RegisterTransportListener(protocol TransportProtocol, listener ListenFunc) error {
 	if _, found := transportListenerCache[protocol]; found {
-		return errors.New("Internet|TCPHub: ", protocol, " listener already registered.")
+		return newError(protocol, " listener already registered.").AtError()
 	}
 	transportListenerCache[protocol] = listener
 	return nil
@@ -44,11 +43,11 @@ func ListenTCP(ctx context.Context, address v2net.Address, port v2net.Port, conn
 	}
 	listenFunc := transportListenerCache[protocol]
 	if listenFunc == nil {
-		return nil, errors.New("Internet|TCPHub: ", protocol, " listener not registered.")
+		return nil, newError(protocol, " listener not registered.").AtError()
 	}
 	listener, err := listenFunc(ctx, address, port, conns)
 	if err != nil {
-		return nil, errors.Base(err).Message("Internet|TCPHub: Failed to listen on address: ", address, ":", port)
+		return nil, newError("failed to listen on address: ", address, ":", port).Base(err)
 	}
 	return listener, nil
 }

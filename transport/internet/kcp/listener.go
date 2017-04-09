@@ -12,10 +12,8 @@ import (
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/transport/internet"
-	"v2ray.com/core/transport/internet/internal"
 	v2tls "v2ray.com/core/transport/internet/tls"
 	"v2ray.com/core/transport/internet/udp"
 )
@@ -27,7 +25,6 @@ type ConnectionID struct {
 }
 
 type ServerConnection struct {
-	id     internal.ConnectionID
 	local  net.Addr
 	remote net.Addr
 	writer PacketWriter
@@ -73,10 +70,6 @@ func (*ServerConnection) SetWriteDeadline(time.Time) error {
 	return nil
 }
 
-func (c *ServerConnection) Id() internal.ConnectionID {
-	return c.id
-}
-
 // Listener defines a server listening for connections
 type Listener struct {
 	sync.Mutex
@@ -94,15 +87,14 @@ type Listener struct {
 func NewListener(ctx context.Context, address v2net.Address, port v2net.Port, conns chan<- internet.Connection) (*Listener, error) {
 	networkSettings := internet.TransportSettingsFromContext(ctx)
 	kcpSettings := networkSettings.(*Config)
-	kcpSettings.ConnectionReuse = &ConnectionReuse{Enable: false}
 
 	header, err := kcpSettings.GetPackerHeader()
 	if err != nil {
-		return nil, errors.Base(err).Message("KCP|Listener: Failed to create packet header.")
+		return nil, newError("failed to create packet header").Base(err).AtError()
 	}
 	security, err := kcpSettings.GetSecurity()
 	if err != nil {
-		return nil, errors.Base(err).Message("KCP|Listener: Failed to create security.")
+		return nil, newError("failed to create security").Base(err).AtError()
 	}
 	l := &Listener{
 		header:   header,
@@ -130,7 +122,7 @@ func NewListener(ctx context.Context, address v2net.Address, port v2net.Port, co
 	l.Lock()
 	l.hub = hub
 	l.Unlock()
-	log.Info("KCP|Listener: listening on ", address, ":", port)
+	log.Trace(newError("listening on ", address, ":", port))
 	return l, nil
 }
 
@@ -139,7 +131,7 @@ func (v *Listener) OnReceive(payload *buf.Buffer, src v2net.Destination, origina
 
 	segments := v.reader.Read(payload.Bytes())
 	if len(segments) == 0 {
-		log.Info("KCP|Listener: discarding invalid payload from ", src)
+		log.Trace(newError("discarding invalid payload from ", src))
 		return
 	}
 
@@ -182,7 +174,6 @@ func (v *Listener) OnReceive(payload *buf.Buffer, src v2net.Destination, origina
 		}
 		localAddr := v.hub.Addr()
 		sConn := &ServerConnection{
-			id:     internal.NewConnectionID(v2net.LocalHostIP, src),
 			local:  localAddr,
 			remote: remoteAddr,
 			writer: &KCPPacketWriter{
@@ -192,17 +183,16 @@ func (v *Listener) OnReceive(payload *buf.Buffer, src v2net.Destination, origina
 			},
 			closer: writer,
 		}
-		conn = NewConnection(conv, sConn, v, v.config)
+		conn = NewConnection(conv, sConn, v.config)
 		var netConn internet.Connection = conn
 		if v.tlsConfig != nil {
 			tlsConn := tls.Server(conn, v.tlsConfig)
-			netConn = UnreusableConnection{Conn: tlsConn}
+			netConn = tlsConn
 		}
 
 		select {
 		case v.conns <- netConn:
 		case <-time.After(time.Second * 5):
-			conn.SetReusable(false)
 			conn.Close()
 			return
 		}
@@ -247,8 +237,6 @@ func (v *Listener) ActiveConnections() int {
 func (v *Listener) Addr() net.Addr {
 	return v.hub.Addr()
 }
-
-func (v *Listener) Put(internal.ConnectionID, net.Conn) {}
 
 type Writer struct {
 	id       ConnectionID

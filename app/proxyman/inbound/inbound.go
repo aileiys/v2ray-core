@@ -1,32 +1,34 @@
 package inbound
 
+//go:generate go run $GOPATH/src/v2ray.com/core/tools/generrorgen/main.go -pkg inbound -path App,Proxyman,Inbound
+
 import (
 	"context"
 
 	"v2ray.com/core/app/proxyman"
 	"v2ray.com/core/common"
-	"v2ray.com/core/common/errors"
 )
 
-type DefaultInboundHandlerManager struct {
+// Manager is to manage all inbound handlers.
+type Manager struct {
 	handlers       []proxyman.InboundHandler
 	taggedHandlers map[string]proxyman.InboundHandler
 }
 
-func New(ctx context.Context, config *proxyman.InboundConfig) (*DefaultInboundHandlerManager, error) {
-	return &DefaultInboundHandlerManager{
+func New(ctx context.Context, config *proxyman.InboundConfig) (*Manager, error) {
+	return &Manager{
 		taggedHandlers: make(map[string]proxyman.InboundHandler),
 	}, nil
 }
 
-func (m *DefaultInboundHandlerManager) AddHandler(ctx context.Context, config *proxyman.InboundHandlerConfig) error {
+func (m *Manager) AddHandler(ctx context.Context, config *proxyman.InboundHandlerConfig) error {
 	rawReceiverSettings, err := config.ReceiverSettings.GetInstance()
 	if err != nil {
 		return err
 	}
 	receiverSettings, ok := rawReceiverSettings.(*proxyman.ReceiverConfig)
 	if !ok {
-		return errors.New("Proxyman|DefaultInboundHandlerManager: Not a ReceiverConfig.")
+		return newError("not a ReceiverConfig")
 	}
 	proxySettings, err := config.ProxySettings.GetInstance()
 	if err != nil {
@@ -50,7 +52,7 @@ func (m *DefaultInboundHandlerManager) AddHandler(ctx context.Context, config *p
 	}
 
 	if handler == nil {
-		return errors.New("Proxyman|DefaultInboundHandlerManager: Unknown allocation strategy: ", receiverSettings.AllocationStrategy.Type)
+		return newError("unknown allocation strategy: ", receiverSettings.AllocationStrategy.Type)
 	}
 
 	m.handlers = append(m.handlers, handler)
@@ -60,15 +62,15 @@ func (m *DefaultInboundHandlerManager) AddHandler(ctx context.Context, config *p
 	return nil
 }
 
-func (m *DefaultInboundHandlerManager) GetHandler(ctx context.Context, tag string) (proxyman.InboundHandler, error) {
+func (m *Manager) GetHandler(ctx context.Context, tag string) (proxyman.InboundHandler, error) {
 	handler, found := m.taggedHandlers[tag]
 	if !found {
-		return nil, errors.New("Proxymand|DefaultInboundHandlerManager: Handler not found: ", tag)
+		return nil, newError("handler not found: ", tag)
 	}
 	return handler, nil
 }
 
-func (m *DefaultInboundHandlerManager) Start() error {
+func (m *Manager) Start() error {
 	for _, handler := range m.handlers {
 		if err := handler.Start(); err != nil {
 			return err
@@ -77,13 +79,13 @@ func (m *DefaultInboundHandlerManager) Start() error {
 	return nil
 }
 
-func (m *DefaultInboundHandlerManager) Close() {
+func (m *Manager) Close() {
 	for _, handler := range m.handlers {
 		handler.Close()
 	}
 }
 
-func (m *DefaultInboundHandlerManager) Interface() interface{} {
+func (m *Manager) Interface() interface{} {
 	return (*proxyman.InboundHandlerManager)(nil)
 }
 

@@ -8,15 +8,13 @@ import (
 	"time"
 
 	"v2ray.com/core/app/log"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/predicate"
-	"v2ray.com/core/transport/internet/internal"
 )
 
 var (
-	ErrIOTimeout        = errors.New("Read/Write timeout")
-	ErrClosedListener   = errors.New("Listener closed.")
-	ErrClosedConnection = errors.New("Connection closed.")
+	ErrIOTimeout        = newError("Read/Write timeout")
+	ErrClosedListener   = newError("Listener closed.")
+	ErrClosedConnection = newError("Connection closed.")
 )
 
 type State int32
@@ -165,21 +163,19 @@ func (u *Updater) SetInterval(d time.Duration) {
 
 type SystemConnection interface {
 	net.Conn
-	Id() internal.ConnectionID
 	Reset(func([]Segment))
 	Overhead() int
 }
 
 // Connection is a KCP connection over UDP.
 type Connection struct {
-	conn         SystemConnection
-	connRecycler internal.ConnectionRecyler
-	rd           time.Time
-	wd           time.Time // write deadline
-	since        int64
-	dataInput    chan bool
-	dataOutput   chan bool
-	Config       *Config
+	conn       SystemConnection
+	rd         time.Time
+	wd         time.Time // write deadline
+	since      int64
+	dataInput  chan bool
+	dataOutput chan bool
+	Config     *Config
 
 	conv             uint16
 	state            State
@@ -197,24 +193,21 @@ type Connection struct {
 
 	dataUpdater *Updater
 	pingUpdater *Updater
-
-	reusable bool
 }
 
 // NewConnection create a new KCP connection between local and remote.
-func NewConnection(conv uint16, sysConn SystemConnection, recycler internal.ConnectionRecyler, config *Config) *Connection {
-	log.Info("KCP|Connection: creating connection ", conv)
+func NewConnection(conv uint16, sysConn SystemConnection, config *Config) *Connection {
+	log.Trace(newError("creating connection ", conv))
 
 	conn := &Connection{
-		conv:         conv,
-		conn:         sysConn,
-		connRecycler: recycler,
-		since:        nowMillisec(),
-		dataInput:    make(chan bool, 1),
-		dataOutput:   make(chan bool, 1),
-		Config:       config,
-		output:       NewSegmentWriter(sysConn),
-		mss:          config.GetMTUValue() - uint32(sysConn.Overhead()) - DataSegmentOverhead,
+		conv:       conv,
+		conn:       sysConn,
+		since:      nowMillisec(),
+		dataInput:  make(chan bool, 1),
+		dataOutput: make(chan bool, 1),
+		Config:     config,
+		output:     NewSegmentWriter(sysConn),
+		mss:        config.GetMTUValue() - uint32(sysConn.Overhead()) - DataSegmentOverhead,
 		roundTrip: &RoundTripInfo{
 			rto:    100,
 			minRtt: config.GetTTIValue(),
@@ -341,7 +334,7 @@ func (v *Connection) SetState(state State) {
 	current := v.Elapsed()
 	atomic.StoreInt32((*int32)(&v.state), int32(state))
 	atomic.StoreUint32(&v.stateBeginTime, current)
-	log.Debug("KCP|Connection: #", v.conv, " entering state ", state, " at ", current)
+	log.Trace(newError("#", v.conv, " entering state ", state, " at ", current).AtDebug())
 
 	switch state {
 	case StateReadyToClose:
@@ -378,7 +371,7 @@ func (v *Connection) Close() error {
 	if state.Is(StateReadyToClose, StateTerminating, StateTerminated) {
 		return ErrClosedConnection
 	}
-	log.Info("KCP|Connection: Closing connection to ", v.conn.RemoteAddr())
+	log.Trace(newError("closing connection to ", v.conn.RemoteAddr()))
 
 	if state == StateActive {
 		v.SetState(StateReadyToClose)
@@ -443,29 +436,17 @@ func (v *Connection) updateTask() {
 	v.flush()
 }
 
-func (v *Connection) Reusable() bool {
-	return v.Config.IsConnectionReuse() && v.reusable
-}
-
-func (v *Connection) SetReusable(b bool) {
-	v.reusable = b
-}
-
 func (v *Connection) Terminate() {
 	if v == nil {
 		return
 	}
-	log.Info("KCP|Connection: Terminating connection to ", v.RemoteAddr())
+	log.Trace(newError("terminating connection to ", v.RemoteAddr()))
 
 	//v.SetState(StateTerminated)
 	v.OnDataInput()
 	v.OnDataOutput()
 
-	if v.Config.IsConnectionReuse() && v.reusable {
-		v.connRecycler.Put(v.conn.Id(), v.conn)
-	} else {
-		v.conn.Close()
-	}
+	v.conn.Close()
 	v.sendingWorker.Release()
 	v.receivingWorker.Release()
 }
@@ -549,7 +530,7 @@ func (v *Connection) flush() {
 	}
 
 	if v.State() == StateTerminating {
-		log.Debug("KCP|Connection: #", v.conv, " sending terminating cmd.")
+		log.Trace(newError("#", v.conv, " sending terminating cmd.").AtDebug())
 		v.Ping(current, CommandTerminate)
 
 		if current-atomic.LoadUint32(&v.stateBeginTime) > 8000 {

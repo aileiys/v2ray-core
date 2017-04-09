@@ -2,41 +2,91 @@ package mux
 
 import (
 	"v2ray.com/core/common/buf"
+	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/serial"
 )
 
-type muxWriter struct {
-	meta   *FrameMetadata
-	writer buf.Writer
+type Writer struct {
+	id       uint16
+	dest     net.Destination
+	writer   buf.Writer
+	followup bool
 }
 
-func (w *muxWriter) Write(b *buf.Buffer) error {
+func NewWriter(id uint16, dest net.Destination, writer buf.Writer) *Writer {
+	return &Writer{
+		id:     id,
+		dest:   dest,
+		writer: writer,
+	}
+}
+
+func NewResponseWriter(id uint16, writer buf.Writer) *Writer {
+	return &Writer{
+		id:       id,
+		writer:   writer,
+		followup: true,
+	}
+}
+
+func (w *Writer) writeInternal(b *buf.Buffer) error {
+	meta := FrameMetadata{
+		SessionID: w.id,
+		Target:    w.dest,
+	}
+	if w.followup {
+		meta.SessionStatus = SessionStatusKeep
+	} else {
+		w.followup = true
+		meta.SessionStatus = SessionStatusNew
+	}
+
+	if b.Len() > 0 {
+		meta.Option.Add(OptionData)
+	}
+
 	frame := buf.New()
-	frame.AppendSupplier(w.meta.AsSupplier())
-	if w.meta.SessionStatus == SessionStatusNew {
-		w.meta.SessionStatus = SessionStatusKeep
+	frame.AppendSupplier(meta.AsSupplier())
+
+	if b.Len() > 0 {
+		frame.AppendSupplier(serial.WriteUint16(0))
+		lengthBytes := frame.BytesFrom(-2)
+
+		nBytes, err := frame.Write(b.Bytes())
+		if err != nil {
+			frame.Release()
+			return err
+		}
+
+		serial.Uint16ToBytes(uint16(nBytes), lengthBytes[:0])
+		b.SliceFrom(nBytes)
 	}
 
-	frame.AppendSupplier(serial.WriteUint16(0))
-	lengthBytes := frame.BytesFrom(-2)
+	return w.writer.Write(frame)
+}
 
-	nBytes, err := frame.Write(b.Bytes())
-	if err != nil {
+func (w *Writer) Write(b *buf.Buffer) error {
+	defer b.Release()
+
+	if err := w.writeInternal(b); err != nil {
 		return err
 	}
-
-	serial.Uint16ToBytes(uint16(nBytes), lengthBytes[:0])
-	if err := w.writer.Write(frame); err != nil {
-		frame.Release()
-		b.Release()
-		return err
+	for !b.IsEmpty() {
+		if err := w.writeInternal(b); err != nil {
+			return err
+		}
 	}
-
-	b.SliceFrom(nBytes)
-	if !b.IsEmpty() {
-		return w.Write(b)
-	}
-	b.Release()
-
 	return nil
+}
+
+func (w *Writer) Close() {
+	meta := FrameMetadata{
+		SessionID:     w.id,
+		SessionStatus: SessionStatusEnd,
+	}
+
+	frame := buf.New()
+	frame.AppendSupplier(meta.AsSupplier())
+
+	w.writer.Write(frame)
 }

@@ -7,35 +7,19 @@ import (
 	"github.com/gorilla/websocket"
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/transport/internet"
-	"v2ray.com/core/transport/internet/internal"
 	v2tls "v2ray.com/core/transport/internet/tls"
 )
 
-var (
-	globalCache = internal.NewConnectionPool()
-)
-
 func Dial(ctx context.Context, dest v2net.Destination) (internet.Connection, error) {
-	log.Info("WebSocket|Dialer: Creating connection to ", dest)
-	src := internet.DialerSourceFromContext(ctx)
-	wsSettings := internet.TransportSettingsFromContext(ctx).(*Config)
+	log.Trace(newError("creating connection to ", dest))
 
-	id := internal.NewConnectionID(src, dest)
-	var conn net.Conn
-	if dest.Network == v2net.Network_TCP && wsSettings.IsConnectionReuse() {
-		conn = globalCache.Get(id)
+	conn, err := dialWebsocket(ctx, dest)
+	if err != nil {
+		return nil, newError("dial failed")
 	}
-	if conn == nil {
-		var err error
-		conn, err = dialWebsocket(ctx, dest)
-		if err != nil {
-			return nil, errors.Base(err).Message("WebSocket|Dialer: Dial failed.")
-		}
-	}
-	return internal.NewConnection(id, conn, globalCache, internal.ReuseConnection(wsSettings.IsConnectionReuse())), nil
+	return internet.Connection(conn), nil
 }
 
 func init() {
@@ -81,7 +65,7 @@ func dialWebsocket(ctx context.Context, dest v2net.Destination) (net.Conn, error
 		if resp != nil {
 			reason = resp.Status
 		}
-		return nil, errors.Base(err).Message("WebSocket|Dialer: Failed to dial to (", uri, "): ", reason)
+		return nil, newError("failed to dial to (", uri, "): ", reason).Base(err)
 	}
 
 	return &connection{

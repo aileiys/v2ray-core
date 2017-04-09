@@ -14,7 +14,6 @@ import (
 	"v2ray.com/core/common/buf"
 	"v2ray.com/core/common/crypto"
 	"v2ray.com/core/common/dice"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/protocol"
 	"v2ray.com/core/common/serial"
@@ -63,7 +62,7 @@ func (v *ClientSession) EncodeRequestHeader(header *protocol.RequestHeader, writ
 	timestamp := protocol.NewTimestampGenerator(protocol.NowTime(), 30)()
 	account, err := header.User.GetTypedAccount()
 	if err != nil {
-		log.Error("VMess: Failed to get user account: ", err)
+		log.Trace(newError("failed to get user account: ", err).AtError())
 		return
 	}
 	idHash := v.idHash(account.(*vmess.InternalAccount).AnyValidID().Bytes())
@@ -186,12 +185,12 @@ func (v *ClientSession) DecodeResponseHeader(reader io.Reader) (*protocol.Respon
 
 	_, err := io.ReadFull(v.responseReader, buffer[:4])
 	if err != nil {
-		log.Info("VMess|Client: Failed to read response header: ", err)
+		log.Trace(newError("failed to read response header").Base(err))
 		return nil, err
 	}
 
 	if buffer[0] != v.responseHeader {
-		return nil, errors.Format("VMess|Client: Unexpected response header. Expecting %d but actually %d", v.responseHeader, buffer[0])
+		return nil, newError("unexpected response header. Expecting ", int(v.responseHeader), " but actually ", int(buffer[0]))
 	}
 
 	header := &protocol.ResponseHeader{
@@ -203,7 +202,7 @@ func (v *ClientSession) DecodeResponseHeader(reader io.Reader) (*protocol.Respon
 		dataLen := int(buffer[3])
 		_, err := io.ReadFull(v.responseReader, buffer[:dataLen])
 		if err != nil {
-			log.Info("VMess|Client: Failed to read response command: ", err)
+			log.Trace(newError("failed to read response command").Base(err))
 			return nil, err
 		}
 		data := buffer[:dataLen]

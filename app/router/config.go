@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 )
 
@@ -53,7 +52,7 @@ func (v *RoutingRule) BuildCondition() (Condition, error) {
 				}
 				ipv6Cond.Add(matcher)
 			default:
-				return nil, errors.New("Router: Invalid IP length.")
+				return nil, newError("invalid IP length").AtError()
 			}
 		}
 
@@ -94,7 +93,7 @@ func (v *RoutingRule) BuildCondition() (Condition, error) {
 				}
 				ipv6Cond.Add(matcher)
 			default:
-				return nil, errors.New("Router: Invalid IP length.")
+				return nil, newError("invalid IP length").AtError()
 			}
 		}
 
@@ -119,7 +118,7 @@ func (v *RoutingRule) BuildCondition() (Condition, error) {
 	}
 
 	if conds.Len() == 0 {
-		return nil, errors.New("Router: This rule has no effective fields.")
+		return nil, newError("this rule has no effective fields").AtError()
 	}
 
 	return conds, nil

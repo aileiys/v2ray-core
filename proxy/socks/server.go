@@ -11,7 +11,6 @@ import (
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/protocol"
 	"v2ray.com/core/common/signal"
@@ -29,7 +28,7 @@ type Server struct {
 func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 	space := app.SpaceFromContext(ctx)
 	if space == nil {
-		return nil, errors.New("Socks|Server: No space in context.").RequireUserAction()
+		return nil, newError("no space in context").AtWarning()
 	}
 	s := &Server{
 		config: config,
@@ -48,15 +47,13 @@ func (s *Server) Network() net.NetworkList {
 }
 
 func (s *Server) Process(ctx context.Context, network net.Network, conn internet.Connection, dispatcher dispatcher.Interface) error {
-	conn.SetReusable(false)
-
 	switch network {
 	case net.Network_TCP:
 		return s.processTCP(ctx, conn, dispatcher)
 	case net.Network_UDP:
 		return s.handleUDPPayload(ctx, conn, dispatcher)
 	default:
-		return errors.New("Socks|Server: Unknown network: ", network)
+		return newError("unknown network: ", network)
 	}
 }
 
@@ -66,7 +63,7 @@ func (s *Server) processTCP(ctx context.Context, conn internet.Connection, dispa
 
 	inboundDest, ok := proxy.InboundEntryPointFromContext(ctx)
 	if !ok {
-		return errors.New("Socks|Server: inbound entry point not specified.")
+		return newError("inbound entry point not specified")
 	}
 	session := &ServerSession{
 		config: s.config,
@@ -78,14 +75,14 @@ func (s *Server) processTCP(ctx context.Context, conn internet.Connection, dispa
 		if source, ok := proxy.SourceFromContext(ctx); ok {
 			log.Access(source, "", log.AccessRejected, err)
 		}
-		log.Info("Socks|Server: Failed to read request: ", err)
+		log.Trace(newError("failed to read request").Base(err))
 		return err
 	}
 	conn.SetReadDeadline(time.Time{})
 
 	if request.Command == protocol.RequestCommandTCP {
 		dest := request.Destination()
-		log.Info("Socks|Server: TCP Connect request to ", dest)
+		log.Trace(newError("TCP Connect request to ", dest))
 		if source, ok := proxy.SourceFromContext(ctx); ok {
 			log.Access(source, dest, log.AccessAccepted, "")
 		}
@@ -110,12 +107,11 @@ func (*Server) handleUDP() error {
 }
 
 func (v *Server) transport(ctx context.Context, reader io.Reader, writer io.Writer, dest net.Destination, dispatcher dispatcher.Interface) error {
-	ctx, cancel := context.WithCancel(ctx)
 	timeout := time.Second * time.Duration(v.config.Timeout)
 	if timeout == 0 {
 		timeout = time.Minute * 2
 	}
-	timer := signal.CancelAfterInactivity(ctx, cancel, timeout)
+	ctx, timer := signal.CancelAfterInactivity(ctx, timeout)
 
 	ray, err := dispatcher.Dispatch(ctx, dest)
 	if err != nil {
@@ -130,7 +126,7 @@ func (v *Server) transport(ctx context.Context, reader io.Reader, writer io.Writ
 
 		v2reader := buf.NewReader(reader)
 		if err := buf.PipeUntilEOF(timer, v2reader, input); err != nil {
-			return errors.Base(err).Message("Socks|Server: Failed to transport all TCP request.")
+			return newError("failed to transport all TCP request").Base(err)
 		}
 		return nil
 	})
@@ -138,7 +134,7 @@ func (v *Server) transport(ctx context.Context, reader io.Reader, writer io.Writ
 	responseDone := signal.ExecuteAsync(func() error {
 		v2writer := buf.NewWriter(writer)
 		if err := buf.PipeUntilEOF(timer, output, v2writer); err != nil {
-			return errors.Base(err).Message("Socks|Server: Failed to transport all TCP response.")
+			return newError("failed to transport all TCP response").Base(err)
 		}
 		return nil
 	})
@@ -146,7 +142,7 @@ func (v *Server) transport(ctx context.Context, reader io.Reader, writer io.Writ
 	if err := signal.ErrorOrFinish2(ctx, requestDone, responseDone); err != nil {
 		input.CloseError()
 		output.CloseError()
-		return errors.Base(err).Message("Socks|Server: Connection ends.")
+		return newError("connection ends").Base(err)
 	}
 
 	runtime.KeepAlive(timer)
@@ -158,7 +154,7 @@ func (v *Server) handleUDPPayload(ctx context.Context, conn internet.Connection,
 	udpServer := udp.NewDispatcher(dispatcher)
 
 	if source, ok := proxy.SourceFromContext(ctx); ok {
-		log.Info("Socks|Server: Client UDP connection from ", source)
+		log.Trace(newError("client UDP connection from ", source))
 	}
 
 	reader := buf.NewReader(conn)
@@ -170,7 +166,7 @@ func (v *Server) handleUDPPayload(ctx context.Context, conn internet.Connection,
 		request, data, err := DecodeUDPPacket(payload.Bytes())
 
 		if err != nil {
-			log.Info("Socks|Server: Failed to parse UDP request: ", err)
+			log.Trace(newError("failed to parse UDP request").Base(err))
 			continue
 		}
 
@@ -178,7 +174,7 @@ func (v *Server) handleUDPPayload(ctx context.Context, conn internet.Connection,
 			continue
 		}
 
-		log.Info("Socks: Send packet to ", request.Destination(), " with ", len(data), " bytes")
+		log.Trace(newError("send packet to ", request.Destination(), " with ", len(data), " bytes").AtDebug())
 		if source, ok := proxy.SourceFromContext(ctx); ok {
 			log.Access(source, request.Destination, log.AccessAccepted, "")
 		}
@@ -188,7 +184,7 @@ func (v *Server) handleUDPPayload(ctx context.Context, conn internet.Connection,
 		udpServer.Dispatch(ctx, request.Destination(), dataBuf, func(payload *buf.Buffer) {
 			defer payload.Release()
 
-			log.Info("Socks|Server: Writing back UDP response with ", payload.Len(), " bytes")
+			log.Trace(newError("writing back UDP response with ", payload.Len(), " bytes").AtDebug())
 
 			udpMessage := EncodeUDPPacket(request, payload.Bytes())
 			defer udpMessage.Release()

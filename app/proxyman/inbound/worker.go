@@ -11,7 +11,6 @@ import (
 	"v2ray.com/core/app/dispatcher"
 	"v2ray.com/core/app/log"
 	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/errors"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/proxy"
 	"v2ray.com/core/transport/internet"
@@ -54,12 +53,7 @@ func (w *tcpWorker) callback(conn internet.Connection) {
 	ctx = proxy.ContextWithInboundEntryPoint(ctx, v2net.TCPDestination(w.address, w.port))
 	ctx = proxy.ContextWithSource(ctx, v2net.DestinationFromAddr(conn.RemoteAddr()))
 	if err := w.proxy.Process(ctx, v2net.Network_TCP, conn, w.dispatcher); err != nil {
-		err := errors.Base(err).Message("Proxyman|TCPWorker: Connection ends.")
-		if errors.IsActionRequired(err) {
-			log.Warning(err)
-		} else {
-			log.Info(err)
-		}
+		log.Trace(newError("connection ends").Base(err))
 	}
 	cancel()
 	conn.Close()
@@ -93,7 +87,6 @@ func (w *tcpWorker) handleConnections(conns <-chan internet.Connection) {
 			for {
 				select {
 				case conn := <-conns:
-					conn.SetReusable(false)
 					conn.Close()
 				default:
 					break L
@@ -171,12 +164,6 @@ func (*udpConn) SetWriteDeadline(time.Time) error {
 	return nil
 }
 
-func (*udpConn) Reusable() bool {
-	return false
-}
-
-func (*udpConn) SetReusable(bool) {}
-
 type udpWorker struct {
 	sync.RWMutex
 
@@ -243,12 +230,7 @@ func (w *udpWorker) callback(b *buf.Buffer, source v2net.Destination, originalDe
 			ctx = proxy.ContextWithSource(ctx, source)
 			ctx = proxy.ContextWithInboundEntryPoint(ctx, v2net.UDPDestination(w.address, w.port))
 			if err := w.proxy.Process(ctx, v2net.Network_UDP, conn, w.dispatcher); err != nil {
-				err = errors.Base(err).Message("Proxyman|UDPWorker: Connection ends.")
-				if errors.IsActionRequired(err) {
-					log.Warning(err)
-				} else {
-					log.Info(err)
-				}
+				log.Trace(newError("connection ends").Base(err))
 			}
 			w.removeConn(source)
 			cancel()
