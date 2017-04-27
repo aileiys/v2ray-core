@@ -1,79 +1,106 @@
 package buf
 
-import "io"
+import (
+	"io"
+
+	"v2ray.com/core/common/errors"
+)
 
 // BytesToBufferReader is a Reader that adjusts its reading speed automatically.
 type BytesToBufferReader struct {
-	reader      io.Reader
-	largeBuffer *Buffer
-	highVolumn  bool
+	reader io.Reader
+	buffer []byte
 }
 
 // Read implements Reader.Read().
-func (v *BytesToBufferReader) Read() (*Buffer, error) {
-	if v.highVolumn && v.largeBuffer.IsEmpty() {
-		if v.largeBuffer == nil {
-			v.largeBuffer = NewLocal(32 * 1024)
-		}
-		err := v.largeBuffer.AppendSupplier(ReadFrom(v.reader))
-		if err != nil {
-			return nil, err
-		}
-		if v.largeBuffer.Len() < Size {
-			v.highVolumn = false
-		}
-	}
-
-	buffer := New()
-	if !v.largeBuffer.IsEmpty() {
-		err := buffer.AppendSupplier(ReadFrom(v.largeBuffer))
-		return buffer, err
-	}
-
-	err := buffer.AppendSupplier(ReadFrom(v.reader))
+func (r *BytesToBufferReader) Read() (MultiBuffer, error) {
+	nBytes, err := r.reader.Read(r.buffer)
 	if err != nil {
-		buffer.Release()
 		return nil, err
 	}
 
-	if buffer.IsFull() {
-		v.highVolumn = true
+	mb := NewMultiBuffer()
+	p := r.buffer[:nBytes]
+	for len(p) > 0 {
+		b := New()
+		nBytes, _ := b.Write(p)
+		mb.Append(b)
+		p = p[nBytes:]
 	}
+	return mb, nil
+}
 
-	return buffer, nil
+type readerAdpater struct {
+	MultiBufferReader
+}
+
+func (r *readerAdpater) Read() (MultiBuffer, error) {
+	return r.ReadMultiBuffer()
 }
 
 type bufferToBytesReader struct {
-	stream  Reader
-	current *Buffer
-	err     error
+	stream   Reader
+	leftOver MultiBuffer
 }
 
-// fill fills in the internal buffer.
-func (v *bufferToBytesReader) fill() {
-	b, err := v.stream.Read()
+func (r *bufferToBytesReader) Read(b []byte) (int, error) {
+	if r.leftOver != nil {
+		nBytes, _ := r.leftOver.Read(b)
+		if r.leftOver.IsEmpty() {
+			r.leftOver.Release()
+			r.leftOver = nil
+		}
+		return nBytes, nil
+	}
+
+	mb, err := r.stream.Read()
 	if err != nil {
-		v.err = err
-		return
+		return 0, err
 	}
-	v.current = b
+
+	nBytes, _ := mb.Read(b)
+	if !mb.IsEmpty() {
+		r.leftOver = mb
+	}
+	return nBytes, nil
 }
 
-func (v *bufferToBytesReader) Read(b []byte) (int, error) {
-	if v.err != nil {
-		return 0, v.err
+func (r *bufferToBytesReader) ReadMultiBuffer() (MultiBuffer, error) {
+	if r.leftOver != nil {
+		mb := r.leftOver
+		r.leftOver = nil
+		return mb, nil
 	}
 
-	if v.current == nil {
-		v.fill()
-		if v.err != nil {
-			return 0, v.err
+	return r.stream.Read()
+}
+
+func (r *bufferToBytesReader) writeToInternal(writer io.Writer) (int64, error) {
+	mbWriter := NewWriter(writer)
+	totalBytes := int64(0)
+	if r.leftOver != nil {
+		if err := mbWriter.Write(r.leftOver); err != nil {
+			return 0, err
+		}
+		totalBytes += int64(r.leftOver.Len())
+	}
+
+	for {
+		mb, err := r.stream.Read()
+		if err != nil {
+			return totalBytes, err
+		}
+		totalBytes += int64(mb.Len())
+		if err := mbWriter.Write(mb); err != nil {
+			return totalBytes, err
 		}
 	}
-	nBytes, err := v.current.Read(b)
-	if v.current.IsEmpty() {
-		v.current.Release()
-		v.current = nil
+}
+
+func (r *bufferToBytesReader) WriteTo(writer io.Writer) (int64, error) {
+	nBytes, err := r.writeToInternal(writer)
+	if errors.Cause(err) == io.EOF {
+		return nBytes, nil
 	}
 	return nBytes, err
 }

@@ -10,6 +10,7 @@ import (
 
 	"v2ray.com/core/app/dispatcher"
 	"v2ray.com/core/app/log"
+	"v2ray.com/core/app/proxyman"
 	"v2ray.com/core/common/buf"
 	v2net "v2ray.com/core/common/net"
 	"v2ray.com/core/proxy"
@@ -33,6 +34,7 @@ type tcpWorker struct {
 	recvOrigDest bool
 	tag          string
 	dispatcher   dispatcher.Interface
+	sniffers     []proxyman.KnownProtocols
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -42,7 +44,10 @@ type tcpWorker struct {
 func (w *tcpWorker) callback(conn internet.Connection) {
 	ctx, cancel := context.WithCancel(w.ctx)
 	if w.recvOrigDest {
-		dest := tcp.GetOriginalDestination(conn)
+		dest, err := tcp.GetOriginalDestination(conn)
+		if err != nil {
+			log.Trace(newError("failed to get original destination").Base(err))
+		}
 		if dest.IsValid() {
 			ctx = proxy.ContextWithOriginalTarget(ctx, dest)
 		}
@@ -52,6 +57,9 @@ func (w *tcpWorker) callback(conn internet.Connection) {
 	}
 	ctx = proxy.ContextWithInboundEntryPoint(ctx, v2net.TCPDestination(w.address, w.port))
 	ctx = proxy.ContextWithSource(ctx, v2net.DestinationFromAddr(conn.RemoteAddr()))
+	if len(w.sniffers) > 0 {
+		ctx = proxyman.ContextWithProtocolSniffers(ctx, w.sniffers)
+	}
 	if err := w.proxy.Process(ctx, v2net.Network_TCP, conn, w.dispatcher); err != nil {
 		log.Trace(newError("connection ends").Base(err))
 	}
@@ -132,6 +140,7 @@ func (c *udpConn) Read(buf []byte) (int, error) {
 	return copy(buf, in.Bytes()), nil
 }
 
+// Write implements io.Writer.
 func (c *udpConn) Write(buf []byte) (int, error) {
 	n, err := c.output(buf)
 	if err == nil {

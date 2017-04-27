@@ -8,9 +8,8 @@ import (
 )
 
 type Reader struct {
-	reader          io.Reader
-	remainingLength int
-	buffer          *buf.Buffer
+	reader io.Reader
+	buffer *buf.Buffer
 }
 
 func NewReader(reader buf.Reader) *Reader {
@@ -29,7 +28,7 @@ func (r *Reader) ReadMetadata() (*FrameMetadata, error) {
 	}
 	metaLen := serial.BytesToUint16(b.Bytes())
 	if metaLen > 512 {
-		return nil, newError("invalid metalen ", metaLen)
+		return nil, newError("invalid metalen ", metaLen).AtWarning()
 	}
 	b.Clear()
 	if err := b.AppendSupplier(buf.ReadFullFrom(r.reader, int(metaLen))); err != nil {
@@ -38,28 +37,26 @@ func (r *Reader) ReadMetadata() (*FrameMetadata, error) {
 	return ReadFrameFrom(b.Bytes())
 }
 
-func (r *Reader) Read() (*buf.Buffer, bool, error) {
-	b := buf.New()
-	var dataLen int
-	if r.remainingLength > 0 {
-		dataLen = r.remainingLength
-		r.remainingLength = 0
-	} else {
-		if err := b.AppendSupplier(buf.ReadFullFrom(r.reader, 2)); err != nil {
-			return nil, false, err
+func (r *Reader) Read() (buf.MultiBuffer, error) {
+	if err := r.buffer.Reset(buf.ReadFullFrom(r.reader, 2)); err != nil {
+		return nil, err
+	}
+
+	dataLen := int(serial.BytesToUint16(r.buffer.Bytes()))
+	mb := buf.NewMultiBuffer()
+	for dataLen > 0 {
+		readLen := buf.Size
+		if dataLen < readLen {
+			readLen = dataLen
 		}
-		dataLen = int(serial.BytesToUint16(b.Bytes()))
-		b.Clear()
+		b := buf.New()
+		if err := b.AppendSupplier(buf.ReadFullFrom(r.reader, readLen)); err != nil {
+			mb.Release()
+			return nil, err
+		}
+		dataLen -= readLen
+		mb.Append(b)
 	}
 
-	if dataLen > buf.Size {
-		r.remainingLength = dataLen - buf.Size
-		dataLen = buf.Size
-	}
-
-	if err := b.AppendSupplier(buf.ReadFullFrom(r.reader, dataLen)); err != nil {
-		return nil, false, err
-	}
-
-	return b, (r.remainingLength > 0), nil
+	return mb, nil
 }

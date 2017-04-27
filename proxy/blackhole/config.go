@@ -28,7 +28,7 @@ func (v *NoneResponse) WriteTo(buf.Writer) {}
 func (v *HTTPResponse) WriteTo(writer buf.Writer) {
 	b := buf.NewLocal(512)
 	b.AppendSupplier(serial.WriteString(http403response))
-	writer.Write(b)
+	writer.Write(buf.NewMultiBufferValue(b))
 }
 
 // GetInternalResponse converts response settings from proto to internal data structure.

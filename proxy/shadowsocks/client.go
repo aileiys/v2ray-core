@@ -28,6 +28,9 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	for _, rec := range config.Server {
 		serverList.AddServer(protocol.NewServerSpecFromPB(*rec))
 	}
+	if serverList.Size() == 0 {
+		return nil, newError("0 server")
+	}
 	client := &Client{
 		serverPicker: protocol.NewRoundRobinServerPicker(serverList),
 	}
@@ -102,8 +105,7 @@ func (v *Client) Process(ctx context.Context, outboundRay ray.OutboundRay, diale
 		}
 
 		requestDone := signal.ExecuteAsync(func() error {
-			mergedInput := buf.NewMergingReader(outboundRay.OutboundInput())
-			if err := buf.PipeUntilEOF(timer, mergedInput, bodyWriter); err != nil {
+			if err := buf.Copy(timer, outboundRay.OutboundInput(), bodyWriter); err != nil {
 				return err
 			}
 			return nil
@@ -117,7 +119,7 @@ func (v *Client) Process(ctx context.Context, outboundRay ray.OutboundRay, diale
 				return err
 			}
 
-			if err := buf.PipeUntilEOF(timer, responseReader, outboundRay.OutboundOutput()); err != nil {
+			if err := buf.Copy(timer, responseReader, outboundRay.OutboundOutput()); err != nil {
 				return err
 			}
 
@@ -133,13 +135,13 @@ func (v *Client) Process(ctx context.Context, outboundRay ray.OutboundRay, diale
 
 	if request.Command == protocol.RequestCommandUDP {
 
-		writer := &UDPWriter{
+		writer := buf.NewSequentialWriter(&UDPWriter{
 			Writer:  conn,
 			Request: request,
-		}
+		})
 
 		requestDone := signal.ExecuteAsync(func() error {
-			if err := buf.PipeUntilEOF(timer, outboundRay.OutboundInput(), writer); err != nil {
+			if err := buf.Copy(timer, outboundRay.OutboundInput(), writer); err != nil {
 				return newError("failed to transport all UDP request").Base(err)
 			}
 			return nil
@@ -153,7 +155,7 @@ func (v *Client) Process(ctx context.Context, outboundRay ray.OutboundRay, diale
 				User:   user,
 			}
 
-			if err := buf.PipeUntilEOF(timer, reader, outboundRay.OutboundOutput()); err != nil {
+			if err := buf.Copy(timer, reader, outboundRay.OutboundOutput()); err != nil {
 				return newError("failed to transport all UDP response").Base(err)
 			}
 			return nil

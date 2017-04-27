@@ -123,17 +123,12 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 			return err
 		}
 
-		var inputReader buf.Reader = input
-		if request.Command == protocol.RequestCommandTCP {
-			inputReader = buf.NewMergingReader(input)
-		}
-
-		if err := buf.PipeUntilEOF(timer, inputReader, bodyWriter); err != nil {
+		if err := buf.Copy(timer, input, bodyWriter); err != nil {
 			return err
 		}
 
 		if request.Option.Has(protocol.RequestOptionChunkStream) {
-			if err := bodyWriter.Write(buf.NewLocal(8)); err != nil {
+			if err := bodyWriter.Write(buf.NewMultiBuffer()); err != nil {
 				return err
 			}
 		}
@@ -152,7 +147,7 @@ func (v *Handler) Process(ctx context.Context, outboundRay ray.OutboundRay, dial
 
 		reader.SetBuffered(false)
 		bodyReader := session.DecodeResponseBody(request, reader)
-		if err := buf.PipeUntilEOF(timer, bodyReader, output); err != nil {
+		if err := buf.Copy(timer, bodyReader, output); err != nil {
 			return err
 		}
 

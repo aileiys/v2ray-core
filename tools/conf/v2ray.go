@@ -30,13 +30,29 @@ var (
 	}, "protocol", "settings")
 )
 
+func toProtocolList(s []string) ([]proxyman.KnownProtocols, error) {
+	kp := make([]proxyman.KnownProtocols, 0, 8)
+	for _, p := range s {
+		switch strings.ToLower(p) {
+		case "http":
+			kp = append(kp, proxyman.KnownProtocols_HTTP)
+		case "https", "tls", "ssl":
+			kp = append(kp, proxyman.KnownProtocols_TLS)
+		default:
+			return nil, newError("Unknown protocol: ", p)
+		}
+	}
+	return kp, nil
+}
+
 type InboundConnectionConfig struct {
-	Port          uint16          `json:"port"`
-	Listen        *Address        `json:"listen"`
-	Protocol      string          `json:"protocol"`
-	StreamSetting *StreamConfig   `json:"streamSettings"`
-	Settings      json.RawMessage `json:"settings"`
-	Tag           string          `json:"tag"`
+	Port           uint16          `json:"port"`
+	Listen         *Address        `json:"listen"`
+	Protocol       string          `json:"protocol"`
+	StreamSetting  *StreamConfig   `json:"streamSettings"`
+	Settings       json.RawMessage `json:"settings"`
+	Tag            string          `json:"tag"`
+	DomainOverride *StringList     `json:"domainOverride"`
 }
 
 func (v *InboundConnectionConfig) Build() (*proxyman.InboundHandlerConfig, error) {
@@ -59,6 +75,13 @@ func (v *InboundConnectionConfig) Build() (*proxyman.InboundHandlerConfig, error
 		}
 		receiverConfig.StreamSettings = ts
 	}
+	if v.DomainOverride != nil {
+		kp, err := toProtocolList(*v.DomainOverride)
+		if err != nil {
+			return nil, newError("failed to parse inbound config").Base(err)
+		}
+		receiverConfig.DomainOverride = kp
+	}
 
 	jsonConfig, err := inboundConfigLoader.LoadWithID(v.Settings, v.Protocol)
 	if err != nil {
@@ -80,7 +103,15 @@ func (v *InboundConnectionConfig) Build() (*proxyman.InboundHandlerConfig, error
 }
 
 type MuxConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool   `json:"enabled"`
+	Concurrency uint16 `json:"concurrency"`
+}
+
+func (c *MuxConfig) GetConcurrency() uint16 {
+	if c.Concurrency == 0 {
+		return 8
+	}
+	return c.Concurrency
 }
 
 type OutboundConnectionConfig struct {
@@ -120,7 +151,8 @@ func (v *OutboundConnectionConfig) Build() (*proxyman.OutboundHandlerConfig, err
 
 	if v.MuxSettings != nil && v.MuxSettings.Enabled {
 		senderSettings.MultiplexSettings = &proxyman.MultiplexingConfig{
-			Enabled: true,
+			Enabled:     true,
+			Concurrency: uint32(v.MuxSettings.GetConcurrency()),
 		}
 	}
 
@@ -174,13 +206,14 @@ func (v *InboundDetourAllocationConfig) Build() (*proxyman.AllocationStrategy, e
 }
 
 type InboundDetourConfig struct {
-	Protocol      string                         `json:"protocol"`
-	PortRange     *PortRange                     `json:"port"`
-	ListenOn      *Address                       `json:"listen"`
-	Settings      json.RawMessage                `json:"settings"`
-	Tag           string                         `json:"tag"`
-	Allocation    *InboundDetourAllocationConfig `json:"allocate"`
-	StreamSetting *StreamConfig                  `json:"streamSettings"`
+	Protocol       string                         `json:"protocol"`
+	PortRange      *PortRange                     `json:"port"`
+	ListenOn       *Address                       `json:"listen"`
+	Settings       json.RawMessage                `json:"settings"`
+	Tag            string                         `json:"tag"`
+	Allocation     *InboundDetourAllocationConfig `json:"allocate"`
+	StreamSetting  *StreamConfig                  `json:"streamSettings"`
+	DomainOverride *StringList                    `json:"domainOverride"`
 }
 
 func (v *InboundDetourConfig) Build() (*proxyman.InboundHandlerConfig, error) {
@@ -210,6 +243,13 @@ func (v *InboundDetourConfig) Build() (*proxyman.InboundHandlerConfig, error) {
 			return nil, err
 		}
 		receiverSettings.StreamSettings = ss
+	}
+	if v.DomainOverride != nil {
+		kp, err := toProtocolList(*v.DomainOverride)
+		if err != nil {
+			return nil, newError("failed to parse inbound detour config").Base(err)
+		}
+		receiverSettings.DomainOverride = kp
 	}
 
 	rawConfig, err := inboundConfigLoader.LoadWithID(v.Settings, v.Protocol)
@@ -270,7 +310,8 @@ func (v *OutboundDetourConfig) Build() (*proxyman.OutboundHandlerConfig, error) 
 
 	if v.MuxSettings != nil && v.MuxSettings.Enabled {
 		senderSettings.MultiplexSettings = &proxyman.MultiplexingConfig{
-			Enabled: true,
+			Enabled:     true,
+			Concurrency: uint32(v.MuxSettings.GetConcurrency()),
 		}
 	}
 

@@ -77,8 +77,8 @@ func (b *Buffer) Bytes() []byte {
 // Reset resets the content of the Buffer with a supplier.
 func (b *Buffer) Reset(writer Supplier) error {
 	b.start = 0
-	nBytes, err := writer(b.v[b.start:])
-	b.end = b.start + nBytes
+	nBytes, err := writer(b.v)
+	b.end = nBytes
 	return err
 }
 
@@ -179,11 +179,6 @@ func (b *Buffer) String() string {
 // New creates a Buffer with 0 length and 8K capacity.
 func New() *Buffer {
 	return mediumPool.Allocate()
-}
-
-// NewSmall returns a buffer with 0 length and 2K capacity.
-func NewSmall() *Buffer {
-	return smallPool.Allocate()
 }
 
 // NewLocal creates and returns a buffer with 0 length and given capacity on current thread.

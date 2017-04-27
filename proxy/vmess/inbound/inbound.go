@@ -129,7 +129,7 @@ func transferRequest(timer signal.ActivityTimer, session *encoding.ServerSession
 	defer output.Close()
 
 	bodyReader := session.DecodeRequestBody(request, input)
-	if err := buf.PipeUntilEOF(timer, bodyReader, output); err != nil {
+	if err := buf.Copy(timer, bodyReader, output); err != nil {
 		return err
 	}
 	return nil
@@ -140,12 +140,8 @@ func transferResponse(timer signal.ActivityTimer, session *encoding.ServerSessio
 
 	bodyWriter := session.EncodeResponseBody(request, output)
 
-	var reader buf.Reader = input
-	if request.Command == protocol.RequestCommandTCP {
-		reader = buf.NewMergingReader(input)
-	}
 	// Optimize for small response packet
-	data, err := reader.Read()
+	data, err := input.Read()
 	if err != nil {
 		return err
 	}
@@ -161,12 +157,12 @@ func transferResponse(timer signal.ActivityTimer, session *encoding.ServerSessio
 		}
 	}
 
-	if err := buf.PipeUntilEOF(timer, reader, bodyWriter); err != nil {
+	if err := buf.Copy(timer, input, bodyWriter); err != nil {
 		return err
 	}
 
 	if request.Option.Has(protocol.RequestOptionChunkStream) {
-		if err := bodyWriter.Write(buf.NewLocal(8)); err != nil {
+		if err := bodyWriter.Write(buf.NewMultiBuffer()); err != nil {
 			return err
 		}
 	}

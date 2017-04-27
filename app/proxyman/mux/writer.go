@@ -1,6 +1,8 @@
 package mux
 
 import (
+	"runtime"
+
 	"v2ray.com/core/common/buf"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/serial"
@@ -15,9 +17,10 @@ type Writer struct {
 
 func NewWriter(id uint16, dest net.Destination, writer buf.Writer) *Writer {
 	return &Writer{
-		id:     id,
-		dest:   dest,
-		writer: writer,
+		id:       id,
+		dest:     dest,
+		writer:   writer,
+		followup: false,
 	}
 }
 
@@ -29,7 +32,7 @@ func NewResponseWriter(id uint16, writer buf.Writer) *Writer {
 	}
 }
 
-func (w *Writer) writeInternal(b *buf.Buffer) error {
+func (w *Writer) getNextFrameMeta() FrameMetadata {
 	meta := FrameMetadata{
 		SessionID: w.id,
 		Target:    w.dest,
@@ -41,38 +44,48 @@ func (w *Writer) writeInternal(b *buf.Buffer) error {
 		meta.SessionStatus = SessionStatusNew
 	}
 
-	if b.Len() > 0 {
-		meta.Option.Add(OptionData)
-	}
-
-	frame := buf.New()
-	frame.AppendSupplier(meta.AsSupplier())
-
-	if b.Len() > 0 {
-		frame.AppendSupplier(serial.WriteUint16(0))
-		lengthBytes := frame.BytesFrom(-2)
-
-		nBytes, err := frame.Write(b.Bytes())
-		if err != nil {
-			frame.Release()
-			return err
-		}
-
-		serial.Uint16ToBytes(uint16(nBytes), lengthBytes[:0])
-		b.SliceFrom(nBytes)
-	}
-
-	return w.writer.Write(frame)
+	return meta
 }
 
-func (w *Writer) Write(b *buf.Buffer) error {
-	defer b.Release()
-
-	if err := w.writeInternal(b); err != nil {
+func (w *Writer) writeMetaOnly() error {
+	meta := w.getNextFrameMeta()
+	b := buf.New()
+	if err := b.AppendSupplier(meta.AsSupplier()); err != nil {
 		return err
 	}
-	for !b.IsEmpty() {
-		if err := w.writeInternal(b); err != nil {
+	runtime.KeepAlive(meta)
+	return w.writer.Write(buf.NewMultiBufferValue(b))
+}
+
+func (w *Writer) writeData(mb buf.MultiBuffer) error {
+	meta := w.getNextFrameMeta()
+	meta.Option.Add(OptionData)
+
+	frame := buf.New()
+	if err := frame.AppendSupplier(meta.AsSupplier()); err != nil {
+		return err
+	}
+	runtime.KeepAlive(meta)
+	if err := frame.AppendSupplier(serial.WriteUint16(uint16(mb.Len()))); err != nil {
+		return err
+	}
+
+	mb2 := buf.NewMultiBuffer()
+	mb2.Append(frame)
+	mb2.AppendMulti(mb)
+	return w.writer.Write(mb2)
+}
+
+// Write implements buf.MultiBufferWriter.
+func (w *Writer) Write(mb buf.MultiBuffer) error {
+	if mb.IsEmpty() {
+		return w.writeMetaOnly()
+	}
+
+	const chunkSize = 8 * 1024
+	for !mb.IsEmpty() {
+		slice := mb.SliceBySize(chunkSize)
+		if err := w.writeData(slice); err != nil {
 			return err
 		}
 	}
@@ -87,6 +100,7 @@ func (w *Writer) Close() {
 
 	frame := buf.New()
 	frame.AppendSupplier(meta.AsSupplier())
+	runtime.KeepAlive(meta)
 
-	w.writer.Write(frame)
+	w.writer.Write(buf.NewMultiBufferValue(frame))
 }

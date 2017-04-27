@@ -1,6 +1,7 @@
 package buf_test
 
 import (
+	"crypto/rand"
 	"testing"
 
 	. "v2ray.com/core/common/buf"
@@ -54,52 +55,29 @@ func TestBufferWrite(t *testing.T) {
 	assert.String(buffer.String()).Equals("abcdabcd")
 }
 
-func BenchmarkNewBuffer8192(b *testing.B) {
+func TestSyncPool(t *testing.T) {
+	assert := assert.On(t)
+
+	p := NewSyncPool(32)
+	b := p.Allocate()
+	assert.Int(b.Len()).Equals(0)
+
+	assert.Error(b.AppendSupplier(ReadFrom(rand.Reader))).IsNil()
+	assert.Int(b.Len()).Equals(32)
+
+	b.Release()
+}
+
+func BenchmarkNewBuffer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buffer := New()
 		buffer.Release()
 	}
 }
 
-func BenchmarkNewLocalBuffer8192(b *testing.B) {
+func BenchmarkNewLocalBuffer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		buffer := NewLocal(8192)
+		buffer := NewLocal(Size)
 		buffer.Release()
-	}
-}
-
-func BenchmarkNewBuffer2048(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		buffer := NewSmall()
-		buffer.Release()
-	}
-}
-
-func BenchmarkNewLocalBuffer2048(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		buffer := NewLocal(2048)
-		buffer.Release()
-	}
-}
-
-func BenchmarkBufferValue(b *testing.B) {
-	x := Buffer{}
-	doSomething := func(a Buffer) {
-		_ = a.Len()
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		doSomething(x)
-	}
-}
-
-func BenchmarkBufferPointer(b *testing.B) {
-	x := NewSmall()
-	doSomething := func(a *Buffer) {
-		_ = a.Len()
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		doSomething(x)
 	}
 }

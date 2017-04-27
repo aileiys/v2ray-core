@@ -1,10 +1,6 @@
 package buf
 
-import (
-	"io"
-
-	"v2ray.com/core/common/errors"
-)
+import "io"
 
 // BufferedWriter is an io.Writer with internal buffer. It writes to underlying writer when buffer is full or on demand.
 // This type is not thread safe.
@@ -23,40 +19,21 @@ func NewBufferedWriter(rawWriter io.Writer) *BufferedWriter {
 	}
 }
 
-// ReadFrom implements io.ReaderFrom.ReadFrom().
-func (v *BufferedWriter) ReadFrom(reader io.Reader) (int64, error) {
-	totalBytes := int64(0)
-	for {
-		oriSize := v.buffer.Len()
-		err := v.buffer.AppendSupplier(ReadFrom(reader))
-		totalBytes += int64(v.buffer.Len() - oriSize)
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				return totalBytes, nil
-			}
-			return totalBytes, err
-		}
-		if err := v.Flush(); err != nil {
-			return totalBytes, err
-		}
+// Write implements io.Writer.
+func (w *BufferedWriter) Write(b []byte) (int, error) {
+	if !w.buffered || w.buffer == nil {
+		return w.writer.Write(b)
 	}
-}
-
-func (v *BufferedWriter) Write(b []byte) (int, error) {
-	if !v.buffered || v.buffer == nil {
-		return v.writer.Write(b)
-	}
-	nBytes, err := v.buffer.Write(b)
+	nBytes, err := w.buffer.Write(b)
 	if err != nil {
 		return 0, err
 	}
-	if v.buffer.IsFull() {
-		err := v.Flush()
-		if err != nil {
+	if w.buffer.IsFull() {
+		if err := w.Flush(); err != nil {
 			return 0, err
 		}
 		if nBytes < len(b) {
-			if _, err := v.writer.Write(b[nBytes:]); err != nil {
+			if _, err := w.writer.Write(b[nBytes:]); err != nil {
 				return nBytes, err
 			}
 		}
@@ -65,28 +42,28 @@ func (v *BufferedWriter) Write(b []byte) (int, error) {
 }
 
 // Flush writes all buffered content into underlying writer, if any.
-func (v *BufferedWriter) Flush() error {
-	defer v.buffer.Clear()
-	for !v.buffer.IsEmpty() {
-		nBytes, err := v.writer.Write(v.buffer.Bytes())
+func (w *BufferedWriter) Flush() error {
+	defer w.buffer.Clear()
+	for !w.buffer.IsEmpty() {
+		nBytes, err := w.writer.Write(w.buffer.Bytes())
 		if err != nil {
 			return err
 		}
-		v.buffer.SliceFrom(nBytes)
+		w.buffer.SliceFrom(nBytes)
 	}
 	return nil
 }
 
 // IsBuffered returns true if this BufferedWriter holds a buffer.
-func (v *BufferedWriter) IsBuffered() bool {
-	return v.buffered
+func (w *BufferedWriter) IsBuffered() bool {
+	return w.buffered
 }
 
 // SetBuffered controls whether the BufferedWriter holds a buffer for writing. If not buffered, any write() calls into underlying writer directly.
-func (v *BufferedWriter) SetBuffered(cached bool) error {
-	v.buffered = cached
-	if !cached && !v.buffer.IsEmpty() {
-		return v.Flush()
+func (w *BufferedWriter) SetBuffered(cached bool) error {
+	w.buffered = cached
+	if !cached && !w.buffer.IsEmpty() {
+		return w.Flush()
 	}
 	return nil
 }

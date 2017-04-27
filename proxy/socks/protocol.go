@@ -116,8 +116,7 @@ func (s *ServerSession) Handshake(reader io.Reader, writer io.Writer) (*protocol
 				return nil, newError("failed to write auth response").Base(err)
 			}
 		}
-		buffer.Clear()
-		if err := buffer.AppendSupplier(buf.ReadFullFrom(reader, 4)); err != nil {
+		if err := buffer.Reset(buf.ReadFullFrom(reader, 4)); err != nil {
 			return nil, newError("failed to read request").Base(err)
 		}
 
@@ -192,24 +191,21 @@ func readUsernamePassword(reader io.Reader) (string, string, error) {
 	buffer := buf.NewLocal(512)
 	defer buffer.Release()
 
-	if err := buffer.AppendSupplier(buf.ReadFullFrom(reader, 2)); err != nil {
+	if err := buffer.Reset(buf.ReadFullFrom(reader, 2)); err != nil {
 		return "", "", err
 	}
 	nUsername := int(buffer.Byte(1))
 
-	buffer.Clear()
-	if err := buffer.AppendSupplier(buf.ReadFullFrom(reader, nUsername)); err != nil {
+	if err := buffer.Reset(buf.ReadFullFrom(reader, nUsername)); err != nil {
 		return "", "", err
 	}
 	username := buffer.String()
-	buffer.Clear()
 
-	if err := buffer.AppendSupplier(buf.ReadFullFrom(reader, 1)); err != nil {
+	if err := buffer.Reset(buf.ReadFullFrom(reader, 1)); err != nil {
 		return "", "", err
 	}
 	nPassword := int(buffer.Byte(0))
-	buffer.Clear()
-	if err := buffer.AppendSupplier(buf.ReadFullFrom(reader, nPassword)); err != nil {
+	if err := buffer.Reset(buf.ReadFullFrom(reader, nPassword)); err != nil {
 		return "", "", err
 	}
 	password := buffer.String()
@@ -332,7 +328,7 @@ func DecodeUDPPacket(packet []byte) (*protocol.RequestHeader, []byte, error) {
 }
 
 func EncodeUDPPacket(request *protocol.RequestHeader, data []byte) *buf.Buffer {
-	b := buf.NewSmall()
+	b := buf.New()
 	b.AppendBytes(0, 0, 0 /* Fragment */)
 	appendAddress(b, request.Address, request.Port)
 	b.Append(data)
@@ -347,8 +343,8 @@ func NewUDPReader(reader io.Reader) *UDPReader {
 	return &UDPReader{reader: reader}
 }
 
-func (r *UDPReader) Read() (*buf.Buffer, error) {
-	b := buf.NewSmall()
+func (r *UDPReader) Read() (buf.MultiBuffer, error) {
+	b := buf.New()
 	if err := b.AppendSupplier(buf.ReadFrom(r.reader)); err != nil {
 		return nil, err
 	}
@@ -358,7 +354,7 @@ func (r *UDPReader) Read() (*buf.Buffer, error) {
 	}
 	b.Clear()
 	b.Append(data)
-	return b, nil
+	return buf.NewMultiBufferValue(b), nil
 }
 
 type UDPWriter struct {
@@ -373,14 +369,14 @@ func NewUDPWriter(request *protocol.RequestHeader, writer io.Writer) *UDPWriter 
 	}
 }
 
-func (w *UDPWriter) Write(b *buf.Buffer) error {
-	eb := EncodeUDPPacket(w.request, b.Bytes())
-	b.Release()
+// Write implements io.Writer.
+func (w *UDPWriter) Write(b []byte) (int, error) {
+	eb := EncodeUDPPacket(w.request, b)
 	defer eb.Release()
 	if _, err := w.writer.Write(eb.Bytes()); err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return len(b), nil
 }
 
 func ClientHandshake(request *protocol.RequestHeader, reader io.Reader, writer io.Writer) (*protocol.RequestHeader, error) {

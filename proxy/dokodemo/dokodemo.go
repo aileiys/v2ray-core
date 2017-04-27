@@ -68,7 +68,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 
 	inboundRay, err := dispatcher.Dispatch(ctx, dest)
 	if err != nil {
-		return err
+		return newError("failed to dispatch request").Base(err)
 	}
 
 	requestDone := signal.ExecuteAsync(func() error {
@@ -76,7 +76,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 
 		chunkReader := buf.NewReader(conn)
 
-		if err := buf.PipeUntilEOF(timer, chunkReader, inboundRay.InboundInput()); err != nil {
+		if err := buf.Copy(timer, chunkReader, inboundRay.InboundInput()); err != nil {
 			return newError("failed to transport request").Base(err)
 		}
 
@@ -86,7 +86,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn in
 	responseDone := signal.ExecuteAsync(func() error {
 		v2writer := buf.NewWriter(conn)
 
-		if err := buf.PipeUntilEOF(timer, inboundRay.InboundOutput(), v2writer); err != nil {
+		if err := buf.Copy(timer, inboundRay.InboundOutput(), v2writer); err != nil {
 			return newError("failed to transport response").Base(err)
 		}
 		return nil

@@ -61,8 +61,7 @@ func InitializeServerConfig(config *core.Config) error {
 	}
 	proc := RunV2RayProtobuf(configBytes)
 
-	err = proc.Start()
-	if err != nil {
+	if err := proc.Start(); err != nil {
 		return err
 	}
 
@@ -110,6 +109,8 @@ func CloseAllServers() {
 	log.Trace(errors.New("Closing all servers."))
 	for _, server := range runningServers {
 		server.Process.Signal(os.Interrupt)
+	}
+	for _, server := range runningServers {
 		server.Process.Wait()
 	}
 	runningServers = make([]*exec.Cmd, 0, 10)

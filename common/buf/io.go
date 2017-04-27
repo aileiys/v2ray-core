@@ -11,19 +11,19 @@ import (
 // Reader extends io.Reader with alloc.Buffer.
 type Reader interface {
 	// Read reads content from underlying reader, and put it into an alloc.Buffer.
-	Read() (*Buffer, error)
+	Read() (MultiBuffer, error)
 }
 
 var ErrReadTimeout = newError("IO timeout")
 
 type TimeoutReader interface {
-	ReadTimeout(time.Duration) (*Buffer, error)
+	ReadTimeout(time.Duration) (MultiBuffer, error)
 }
 
 // Writer extends io.Writer with alloc.Buffer.
 type Writer interface {
 	// Write writes an alloc.Buffer into underlying writer.
-	Write(*Buffer) error
+	Write(MultiBuffer) error
 }
 
 // ReadFrom creates a Supplier to read from a given io.Reader.
@@ -40,9 +40,7 @@ func ReadFullFrom(reader io.Reader, size int) Supplier {
 	}
 }
 
-// Pipe dumps all payload from reader to writer, until an error occurs.
-// ActivityTimer gets updated as soon as there is a payload.
-func Pipe(timer signal.ActivityTimer, reader Reader, writer Writer) error {
+func copyInternal(timer signal.ActivityTimer, reader Reader, writer Writer) error {
 	for {
 		buffer, err := reader.Read()
 		if err != nil {
@@ -56,17 +54,17 @@ func Pipe(timer signal.ActivityTimer, reader Reader, writer Writer) error {
 			continue
 		}
 
-		err = writer.Write(buffer)
-		if err != nil {
+		if err := writer.Write(buffer); err != nil {
 			buffer.Release()
 			return err
 		}
 	}
 }
 
-// PipeUntilEOF behaves the same as Pipe(). The only difference is PipeUntilEOF returns nil on EOF.
-func PipeUntilEOF(timer signal.ActivityTimer, reader Reader, writer Writer) error {
-	err := Pipe(timer, reader, writer)
+// Copy dumps all payload from reader to writer or stops when an error occurs.
+// ActivityTimer gets updated as soon as there is a payload.
+func Copy(timer signal.ActivityTimer, reader Reader, writer Writer) error {
+	err := copyInternal(timer, reader, writer)
 	if err != nil && errors.Cause(err) != io.EOF {
 		return err
 	}
@@ -76,8 +74,26 @@ func PipeUntilEOF(timer signal.ActivityTimer, reader Reader, writer Writer) erro
 // NewReader creates a new Reader.
 // The Reader instance doesn't take the ownership of reader.
 func NewReader(reader io.Reader) Reader {
+	if mr, ok := reader.(MultiBufferReader); ok {
+		return &readerAdpater{
+			MultiBufferReader: mr,
+		}
+	}
+
 	return &BytesToBufferReader{
 		reader: reader,
+		buffer: make([]byte, 32*1024),
+	}
+}
+
+func NewMergingReader(reader io.Reader) Reader {
+	return NewMergingReaderSize(reader, 32*1024)
+}
+
+func NewMergingReaderSize(reader io.Reader, size uint32) Reader {
+	return &BytesToBufferReader{
+		reader: reader,
+		buffer: make([]byte, size),
 	}
 }
 
@@ -90,7 +106,30 @@ func ToBytesReader(stream Reader) io.Reader {
 
 // NewWriter creates a new Writer.
 func NewWriter(writer io.Writer) Writer {
+	if mw, ok := writer.(MultiBufferWriter); ok {
+		return &writerAdapter{
+			writer: mw,
+		}
+	}
+
 	return &BufferToBytesWriter{
+		writer: writer,
+	}
+}
+
+func NewMergingWriter(writer io.Writer) Writer {
+	return NewMergingWriterSize(writer, 4096)
+}
+
+func NewMergingWriterSize(writer io.Writer, size uint32) Writer {
+	return &mergingWriter{
+		writer: writer,
+		buffer: make([]byte, size),
+	}
+}
+
+func NewSequentialWriter(writer io.Writer) Writer {
+	return &seqWriter{
 		writer: writer,
 	}
 }

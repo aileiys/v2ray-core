@@ -62,13 +62,18 @@ func NewHandler(ctx context.Context, config *proxyman.OutboundHandlerConfig) (*H
 	}
 
 	if h.senderSettings != nil && h.senderSettings.MultiplexSettings != nil && h.senderSettings.MultiplexSettings.Enabled {
-		h.mux = mux.NewClientManager(proxyHandler, h)
+		config := h.senderSettings.MultiplexSettings
+		if config.Concurrency < 1 || config.Concurrency > 1024 {
+			return nil, newError("invalid mux concurrency: ", config.Concurrency)
+		}
+		h.mux = mux.NewClientManager(proxyHandler, h, config)
 	}
 
 	h.proxy = proxyHandler
 	return h, nil
 }
 
+// Dispatch implements proxy.Outbound.Dispatch.
 func (h *Handler) Dispatch(ctx context.Context, outboundRay ray.OutboundRay) {
 	if h.mux != nil {
 		err := h.mux.Dispatch(ctx, outboundRay)
@@ -117,14 +122,20 @@ func (h *Handler) Dial(ctx context.Context, dest v2net.Destination) (internet.Co
 	return internet.Dial(ctx, dest)
 }
 
+var (
+	_ buf.MultiBufferReader = (*Connection)(nil)
+	_ buf.MultiBufferWriter = (*Connection)(nil)
+)
+
 type Connection struct {
 	stream     ray.Ray
 	closed     bool
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	reader io.Reader
-	writer io.Writer
+	bytesReader io.Reader
+	reader      buf.Reader
+	writer      buf.Writer
 }
 
 func NewConnection(stream ray.Ray) *Connection {
@@ -138,8 +149,9 @@ func NewConnection(stream ray.Ray) *Connection {
 			IP:   []byte{0, 0, 0, 0},
 			Port: 0,
 		},
-		reader: buf.ToBytesReader(stream.InboundOutput()),
-		writer: buf.ToBytesWriter(stream.InboundInput()),
+		bytesReader: buf.ToBytesReader(stream.InboundOutput()),
+		reader:      stream.InboundOutput(),
+		writer:      stream.InboundInput(),
 	}
 }
 
@@ -148,7 +160,11 @@ func (v *Connection) Read(b []byte) (int, error) {
 	if v.closed {
 		return 0, io.EOF
 	}
-	return v.reader.Read(b)
+	return v.bytesReader.Read(b)
+}
+
+func (v *Connection) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	return v.reader.Read()
 }
 
 // Write implements net.Conn.Write().
@@ -156,7 +172,14 @@ func (v *Connection) Write(b []byte) (int, error) {
 	if v.closed {
 		return 0, io.ErrClosedPipe
 	}
-	return v.writer.Write(b)
+	return buf.ToBytesWriter(v.writer).Write(b)
+}
+
+func (v *Connection) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	if v.closed {
+		return io.ErrClosedPipe
+	}
+	return v.writer.Write(mb)
 }
 
 // Close implements net.Conn.Close().
