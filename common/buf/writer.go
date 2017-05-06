@@ -72,12 +72,7 @@ type bytesToBufferWriter struct {
 // Write implements io.Writer.
 func (w *bytesToBufferWriter) Write(payload []byte) (int, error) {
 	mb := NewMultiBuffer()
-	for p := payload; len(p) > 0; {
-		b := New()
-		nBytes, _ := b.Write(p)
-		p = p[nBytes:]
-		mb.Append(b)
-	}
+	mb.Write(payload)
 	if err := w.writer.Write(mb); err != nil {
 		return 0, err
 	}
@@ -106,3 +101,14 @@ func (w *bytesToBufferWriter) ReadFrom(reader io.Reader) (int64, error) {
 	}
 	return totalBytes, nil
 }
+
+type noOpWriter struct{}
+
+func (noOpWriter) Write(b MultiBuffer) error {
+	b.Release()
+	return nil
+}
+
+var (
+	Discard Writer = noOpWriter{}
+)

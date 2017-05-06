@@ -240,7 +240,16 @@ func (v *ServerSession) DecodeRequestBody(request *protocol.RequestHeader, reade
 	}
 	if request.Security.Is(protocol.SecurityType_NONE) {
 		if request.Option.Has(protocol.RequestOptionChunkStream) {
-			return crypto.NewChunkStreamReader(sizeParser, reader)
+			if request.Command == protocol.RequestCommandTCP {
+				return crypto.NewChunkStreamReader(sizeParser, reader)
+			}
+
+			auth := &crypto.AEADAuthenticator{
+				AEAD:                    new(NoOpAuthenticator),
+				NonceGenerator:          crypto.NoOpBytesGenerator{},
+				AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
+			}
+			return crypto.NewAuthenticationReader(auth, sizeParser, reader, protocol.TransferTypePacket)
 		}
 
 		return buf.NewReader(reader)
@@ -255,7 +264,7 @@ func (v *ServerSession) DecodeRequestBody(request *protocol.RequestHeader, reade
 				NonceGenerator:          crypto.NoOpBytesGenerator{},
 				AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 			}
-			return crypto.NewAuthenticationReader(auth, sizeParser, cryptionReader)
+			return crypto.NewAuthenticationReader(auth, sizeParser, cryptionReader, request.Command.TransferType())
 		}
 
 		return buf.NewReader(cryptionReader)
@@ -273,7 +282,7 @@ func (v *ServerSession) DecodeRequestBody(request *protocol.RequestHeader, reade
 			},
 			AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 		}
-		return crypto.NewAuthenticationReader(auth, sizeParser, reader)
+		return crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType())
 	}
 
 	if request.Security.Is(protocol.SecurityType_CHACHA20_POLY1305) {
@@ -287,7 +296,7 @@ func (v *ServerSession) DecodeRequestBody(request *protocol.RequestHeader, reade
 			},
 			AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 		}
-		return crypto.NewAuthenticationReader(auth, sizeParser, reader)
+		return crypto.NewAuthenticationReader(auth, sizeParser, reader, request.Command.TransferType())
 	}
 
 	panic("Unknown security type.")
@@ -317,7 +326,16 @@ func (v *ServerSession) EncodeResponseBody(request *protocol.RequestHeader, writ
 	}
 	if request.Security.Is(protocol.SecurityType_NONE) {
 		if request.Option.Has(protocol.RequestOptionChunkStream) {
-			return crypto.NewChunkStreamWriter(sizeParser, writer)
+			if request.Command == protocol.RequestCommandTCP {
+				return crypto.NewChunkStreamWriter(sizeParser, writer)
+			}
+
+			auth := &crypto.AEADAuthenticator{
+				AEAD:                    new(NoOpAuthenticator),
+				NonceGenerator:          &crypto.NoOpBytesGenerator{},
+				AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
+			}
+			return crypto.NewAuthenticationWriter(auth, sizeParser, writer, protocol.TransferTypePacket)
 		}
 
 		return buf.NewWriter(writer)
@@ -330,7 +348,7 @@ func (v *ServerSession) EncodeResponseBody(request *protocol.RequestHeader, writ
 				NonceGenerator:          crypto.NoOpBytesGenerator{},
 				AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 			}
-			return crypto.NewAuthenticationWriter(auth, sizeParser, v.responseWriter)
+			return crypto.NewAuthenticationWriter(auth, sizeParser, v.responseWriter, request.Command.TransferType())
 		}
 
 		return buf.NewWriter(v.responseWriter)
@@ -348,7 +366,7 @@ func (v *ServerSession) EncodeResponseBody(request *protocol.RequestHeader, writ
 			},
 			AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 		}
-		return crypto.NewAuthenticationWriter(auth, sizeParser, writer)
+		return crypto.NewAuthenticationWriter(auth, sizeParser, writer, request.Command.TransferType())
 	}
 
 	if request.Security.Is(protocol.SecurityType_CHACHA20_POLY1305) {
@@ -362,7 +380,7 @@ func (v *ServerSession) EncodeResponseBody(request *protocol.RequestHeader, writ
 			},
 			AdditionalDataGenerator: crypto.NoOpBytesGenerator{},
 		}
-		return crypto.NewAuthenticationWriter(auth, sizeParser, writer)
+		return crypto.NewAuthenticationWriter(auth, sizeParser, writer, request.Command.TransferType())
 	}
 
 	panic("Unknown security type.")

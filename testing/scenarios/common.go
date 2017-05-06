@@ -30,6 +30,18 @@ func pickPort() v2net.Port {
 	return v2net.Port(addr.Port)
 }
 
+func pickUDPPort() v2net.Port {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP:   v2net.LocalHostIP.IP(),
+		Port: 0,
+	})
+	common.Must(err)
+	defer conn.Close()
+
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	return v2net.Port(addr.Port)
+}
+
 func xor(b []byte) []byte {
 	r := make([]byte, len(b))
 	for i, v := range b {
@@ -81,17 +93,14 @@ var (
 func genTestBinaryPath() {
 	testBinaryPathGen.Do(func() {
 		var tempDir string
-		err := retry.Timed(5, 100).On(func() error {
+		common.Must(retry.Timed(5, 100).On(func() error {
 			dir, err := ioutil.TempDir("", "v2ray")
 			if err != nil {
 				return err
 			}
 			tempDir = dir
 			return nil
-		})
-		if err != nil {
-			panic(err)
-		}
+		}))
 		file := filepath.Join(tempDir, "v2ray.test")
 		if runtime.GOOS == "windows" {
 			file += ".exe"
