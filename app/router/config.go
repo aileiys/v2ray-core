@@ -12,35 +12,40 @@ type Rule struct {
 	Condition Condition
 }
 
-func (v *Rule) Apply(ctx context.Context) bool {
-	return v.Condition.Apply(ctx)
+func (r *Rule) Apply(ctx context.Context) bool {
+	return r.Condition.Apply(ctx)
 }
 
-func (v *RoutingRule) BuildCondition() (Condition, error) {
+func (rr *RoutingRule) BuildCondition() (Condition, error) {
 	conds := NewConditionChan()
 
-	if len(v.Domain) > 0 {
+	if len(rr.Domain) > 0 {
 		anyCond := NewAnyCondition()
-		for _, domain := range v.Domain {
-			if domain.Type == Domain_Plain {
+		for _, domain := range rr.Domain {
+			switch domain.Type {
+			case Domain_Plain:
 				anyCond.Add(NewPlainDomainMatcher(domain.Value))
-			} else {
+			case Domain_Regex:
 				matcher, err := NewRegexpDomainMatcher(domain.Value)
 				if err != nil {
 					return nil, err
 				}
 				anyCond.Add(matcher)
+			case Domain_Domain:
+				anyCond.Add(NewSubDomainMatcher(domain.Value))
+			default:
+				panic("Unknown domain type.")
 			}
 		}
 		conds.Add(anyCond)
 	}
 
-	if len(v.Cidr) > 0 {
+	if len(rr.Cidr) > 0 {
 		ipv4Net := v2net.NewIPNet()
 		ipv6Cond := NewAnyCondition()
 		hasIpv6 := false
 
-		for _, ip := range v.Cidr {
+		for _, ip := range rr.Cidr {
 			switch len(ip.Ip) {
 			case net.IPv4len:
 				ipv4Net.AddIP(ip.Ip, byte(ip.Prefix))
@@ -68,20 +73,20 @@ func (v *RoutingRule) BuildCondition() (Condition, error) {
 		}
 	}
 
-	if v.PortRange != nil {
-		conds.Add(NewPortMatcher(*v.PortRange))
+	if rr.PortRange != nil {
+		conds.Add(NewPortMatcher(*rr.PortRange))
 	}
 
-	if v.NetworkList != nil {
-		conds.Add(NewNetworkMatcher(v.NetworkList))
+	if rr.NetworkList != nil {
+		conds.Add(NewNetworkMatcher(rr.NetworkList))
 	}
 
-	if len(v.SourceCidr) > 0 {
+	if len(rr.SourceCidr) > 0 {
 		ipv4Net := v2net.NewIPNet()
 		ipv6Cond := NewAnyCondition()
 		hasIpv6 := false
 
-		for _, ip := range v.SourceCidr {
+		for _, ip := range rr.SourceCidr {
 			switch len(ip.Ip) {
 			case net.IPv4len:
 				ipv4Net.AddIP(ip.Ip, byte(ip.Prefix))
@@ -109,12 +114,12 @@ func (v *RoutingRule) BuildCondition() (Condition, error) {
 		}
 	}
 
-	if len(v.UserEmail) > 0 {
-		conds.Add(NewUserMatcher(v.UserEmail))
+	if len(rr.UserEmail) > 0 {
+		conds.Add(NewUserMatcher(rr.UserEmail))
 	}
 
-	if len(v.InboundTag) > 0 {
-		conds.Add(NewInboundTagMatcher(v.InboundTag))
+	if len(rr.InboundTag) > 0 {
+		conds.Add(NewInboundTagMatcher(rr.InboundTag))
 	}
 
 	if conds.Len() == 0 {

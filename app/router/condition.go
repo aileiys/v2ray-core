@@ -65,17 +65,13 @@ func (v *AnyCondition) Len() int {
 	return len(*v)
 }
 
-type PlainDomainMatcher struct {
-	pattern string
+type PlainDomainMatcher string
+
+func NewPlainDomainMatcher(pattern string) Condition {
+	return PlainDomainMatcher(pattern)
 }
 
-func NewPlainDomainMatcher(pattern string) *PlainDomainMatcher {
-	return &PlainDomainMatcher{
-		pattern: pattern,
-	}
-}
-
-func (v *PlainDomainMatcher) Apply(ctx context.Context) bool {
+func (v PlainDomainMatcher) Apply(ctx context.Context) bool {
 	dest, ok := proxy.TargetFromContext(ctx)
 	if !ok {
 		return false
@@ -85,7 +81,7 @@ func (v *PlainDomainMatcher) Apply(ctx context.Context) bool {
 		return false
 	}
 	domain := dest.Address.Domain()
-	return strings.Contains(domain, v.pattern)
+	return strings.Contains(domain, string(v))
 }
 
 type RegexpDomainMatcher struct {
@@ -112,6 +108,28 @@ func (v *RegexpDomainMatcher) Apply(ctx context.Context) bool {
 	}
 	domain := dest.Address.Domain()
 	return v.pattern.MatchString(strings.ToLower(domain))
+}
+
+type SubDomainMatcher string
+
+func NewSubDomainMatcher(p string) Condition {
+	return SubDomainMatcher(p)
+}
+
+func (m SubDomainMatcher) Apply(ctx context.Context) bool {
+	dest, ok := proxy.TargetFromContext(ctx)
+	if !ok {
+		return false
+	}
+	if !dest.Address.Family().IsDomain() {
+		return false
+	}
+	domain := dest.Address.Domain()
+	pattern := string(m)
+	if !strings.HasSuffix(domain, pattern) {
+		return false
+	}
+	return len(domain) == len(pattern) || domain[len(domain)-len(pattern)-1] == '.'
 }
 
 type CIDRMatcher struct {
@@ -245,8 +263,14 @@ type UserMatcher struct {
 }
 
 func NewUserMatcher(users []string) *UserMatcher {
+	usersCopy := make([]string, 0, len(users))
+	for _, user := range users {
+		if len(user) > 0 {
+			usersCopy = append(usersCopy, user)
+		}
+	}
 	return &UserMatcher{
-		user: users,
+		user: usersCopy,
 	}
 }
 
@@ -268,8 +292,14 @@ type InboundTagMatcher struct {
 }
 
 func NewInboundTagMatcher(tags []string) *InboundTagMatcher {
+	tagsCopy := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if len(tag) > 0 {
+			tagsCopy = append(tagsCopy, tag)
+		}
+	}
 	return &InboundTagMatcher{
-		tags: tags,
+		tags: tagsCopy,
 	}
 }
 
